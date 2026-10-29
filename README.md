@@ -45,6 +45,23 @@ CLIs `l4d2api-installer.exe` / `l4d2api-pack.exe` (+ checksums), built on
 `windows-latest`. Download, verify the hash, and run the commands below
 with `l4d2api-installer.exe` instead of `cargo run -p l4d2api-installer --`.
 
+### What the release contains (and what it doesn't)
+
+Included in every tagged release:
+
+- `tiktools-l4d2api-<version>.vpk` (+ SHA-256 + manifest) — the game addon.
+- `l4d2api-installer[.exe]` — Steam discovery, versioned
+  install/repair/uninstall, workshop conflict check/quarantine/restore.
+- `l4d2api-pack[.exe]` — rebuild or verify the `.vpk` yourself.
+
+You provide: Steam + Left 4 Dead 2 (AppID 550) installed, and TikTools.
+There is deliberately NO game server in the release and none is needed:
+in the local-host flow *your own L4D2 session is the server* — you launch
+the game normally and host a local/listen campaign. No SRCDS download, no
+RCON password, no port forwarding, no background service, no SourceMod.
+(A dedicated SRCDS only belongs to the separate opt-in `legacy_rcon`
+path, which lives in TikTools-app and is configured there — not here.)
+
 Developers (Rust + Git): every command below is identical on Windows and
 Linux — the CLI auto-discovers `Program Files (x86)\Steam`; pass
 `--game-dir` only for secondary libraries. Quote paths with spaces.

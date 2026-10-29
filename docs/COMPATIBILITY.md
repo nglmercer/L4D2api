@@ -9,16 +9,34 @@ Not supported (documented limits, not bugs):
 - Remote / Valve / community dedicated servers and non-host clients: the
   addon only acts on the authoritative host; anything else is refused with
   `NOT_HOST` / `not_host`. Dedicated-server users keep opt-in `legacy_rcon`.
-- Special-infected spawns are capability-gated per entry and stay
-  `CAPABILITY_UNAVAILABLE` until each is proven via VScript with `sv_cheats 0`.
+- One outstanding mutation at a time per client; one active writer per IPC
+  directory across processes (extra writers get `Busy` / `Locked`, never
+  an interleaved write).
 - Old commands never cross a game generation (relaunch / map change):
   outstanding state is cleared and a fresh handshake is required.
-- One outstanding mutation at a time; later parallelism needs a newly
-  versioned, proven-safe protocol.
 
-Features are labeled `verified`, `experimental`, `unsupported`, or `blocked`
-based on evidence — never aspiration. Current label for the whole Windows
-local path: **blocked** (live gate not yet run on this Linux workspace).
+## Per-capability matrix
+
+Labels: `verified` (reproducible evidence on record), `experimental`
+(implemented, live-game verification pending), `unsupported` (refused by
+design), `blocked` (cannot work by construction).
+
+| Capability | Label | Notes |
+|---|---|---|
+| `test_connection` | `experimental` | readiness-gated; user-reported working, evidence still required |
+| `spawn_item` | `experimental` | stock world pickups; user-reported working, evidence still required |
+| `spawn_weapon` | `experimental` | stock world pickups; user-reported working, evidence still required |
+| `spawn_common` | `unsupported` | gated `CAPABILITY_UNAVAILABLE` until proven with `sv_cheats 0` |
+| `spawn_infected` | `unsupported` | gated `CAPABILITY_UNAVAILABLE` until proven with `sv_cheats 0` |
+
+The user reports the integration is now working in their local-host
+session. That report is recorded (not dismissed) in
+[WINDOWS_TESTING.md](WINDOWS_TESTING.md), but per-capability labels stay
+`experimental` until reproducible evidence (versions, hashes, observed
+behavior) is on record. Nothing here is marked `verified` on the basis of
+an unrecorded session, and nothing in the SDKs advertises a gated action
+as available: `capabilities()` only lists what the game's live heartbeat
+advertises.
 
 ## Workshop mods and consistency kicks
 
@@ -39,9 +57,9 @@ Three durable answers, no manual file juggling:
    brings them back afterwards. Weapon scripts (`scripts/weapon_*.txt`)
    are a measured kick trigger; other stock script overrides are reported
    as suspicious for the user to decide. Skins/sounds/models never kick.
-3. **Local-host path (this repo's future default):** the file-IPC transport
-   has no client/server file comparison at all, so it is inherently
-   mod-agnostic. Pending the Windows live gate.
+3. **Local-host path (this repo's default):** the file-IPC transport has
+   no client/server file comparison at all, so it is inherently
+   mod-agnostic. Pending the Windows live evidence gate.
 
 Hard limit, stated plainly: no code in this repo can force a
 third-party stock server to accept modded stock files. Detection +

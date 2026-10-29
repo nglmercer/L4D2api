@@ -3,3 +3,6 @@
 *.tmp
 *.log
 .DS_Store
+.venv/
+node_modules/
+sdk/javascript/dist/

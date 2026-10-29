@@ -1,123 +1,138 @@
 # L4D2api
 
-Standalone, installable Left 4 Dead 2 VScript addon (`.vpk`) plus a reusable
-Rust IPC client / installer SDK, for driving a **normal Windows Steam local /
-listen-hosted L4D2 session** from TikTools — no SourceMod, no MetaMod, no
-dedicated server, no RCON password, no terminal.
+File-IPC integration for Left 4 Dead 2: a versioned VScript game addon
+(`.vpk`) plus reusable SDKs (Rust, Python, JavaScript/TypeScript) that
+drive a **normal Windows Steam local / listen-hosted L4D2 session** —
+no SourceMod, no MetaMod, no dedicated server, no RCON, no DLL injection,
+no executable patching, no `.bat`/`.sh` scripts for end users, no HTTP
+server, no background service. `sv_cheats 0` throughout.
 
-> **Status: feasibility prototype, `0.1.0`. NOT production ready.**
-> The Windows live gate (real Steam L4D2 local campaign: addon auto-load +
-> bidirectional file IPC + one visible gameplay action) has **not** been run —
-> this workspace is Linux. See [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md)
-> and [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md). Nothing in this repo
-> claims a verified Windows gameplay result.
+Transport is files, not HTTP: the SDKs and the game exchange
+`command.txt` / `result.txt` / `heartbeat.txt` in the game's
+`left4dead2/ems/tiktools_l4d2/` sandbox. Nothing here is REST-based.
 
-## Layout
+## What currently works
 
-```text
-addon/                  VScript addon source (packed into the .vpk)
-crates/
-  l4d2api-protocol/     v1 text-protocol codec, validation, fixtures
-  l4d2api-client/       file-IPC session client (single-flight, freshness)
-  l4d2api-installer/    Windows Steam discovery + versioned install/repair/uninstall + workshop conflict quarantine
-  l4d2api-pack/         deterministic VPK v1 packer (lib + CLI)
-tests/fixtures/         canonical valid/malformed/truncated protocol records
-docs/                   architecture, protocol, install, security, test plan
-```
+- **Pack**: deterministic, validated `.vpk` builds (`l4d2api-pack`).
+- **Install / verify / repair / status / uninstall**: versioned, transactional,
+  ownership-scoped (`l4d2api-installer` CLI; `check`, `quarantine`, `restore`).
+- **Protocol v1**: strict codec + validation in Rust, Python and
+  JavaScript/TypeScript, pinned to shared fixtures (`tests/fixtures/`).
+- **Session clients**: single-writer lock, atomic writes, heartbeat
+  freshness, typed errors, unique request ids, no gameplay auto-retries.
+- **Game side**: `test_connection`, `spawn_item`, `spawn_weapon` against
+  stock world-pickup entities (implemented; live-game verification pending
+  the recorded evidence gate — see below).
+- `spawn_common` / `spawn_infected` are implemented but stay
+  capability-gated (`CAPABILITY_UNAVAILABLE`) until proven with
+  `sv_cheats 0` on the real game. They are not advertised as working.
 
-## Quick start (developers)
+User report (unrecorded): the reporter states the L4D2 integration is now
+working in their local-host session. That report is tracked as
+user-reported success in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md),
+separate from reproducible test evidence, which is still required before
+any `verified` label changes.
 
-```bash
-cargo test --locked --workspace
-cargo run -p l4d2api-pack -- --addon addon --out dist/tiktools-l4d2api-0.1.0.vpk --version 0.1.0
-bash scripts/lint_nut.sh
-```
+## Quick installation (Windows 10/11, Steam L4D2)
 
-On Windows the `cargo` commands are identical (PowerShell: use
-`dist\...` paths); `scripts/lint_nut.sh` runs in Git Bash, which ships
-with Git for Windows. End users skip all of this — see Releases below.
-
-## Windows (10/11, Steam L4D2 AppID 550)
-
-**End users: no Rust, no build.** Every tagged release attaches ready-made
-artifacts: the versioned `.vpk` (+ SHA-256 + manifest) and the Windows
-CLIs `l4d2api-installer.exe` / `l4d2api-pack.exe` (+ checksums), built on
-`windows-latest`. Download, verify the hash, and run the commands below
-with `l4d2api-installer.exe` instead of `cargo run -p l4d2api-installer --`.
-
-### What the release contains (and what it doesn't)
-
-Included in every tagged release:
-
-- `tiktools-l4d2api-<version>.vpk` (+ SHA-256 + manifest) — the game addon.
-- `l4d2api-installer[.exe]` — Steam discovery, versioned
-  install/repair/uninstall, workshop conflict check/quarantine/restore.
-- `l4d2api-pack[.exe]` — rebuild or verify the `.vpk` yourself.
-
-You provide: Steam + Left 4 Dead 2 (AppID 550) installed, and TikTools.
-There is deliberately NO game server in the release and none is needed:
-in the local-host flow *your own L4D2 session is the server* — you launch
-the game normally and host a local/listen campaign. No SRCDS download, no
-RCON password, no port forwarding, no background service, no SourceMod.
-(A dedicated SRCDS only belongs to the separate opt-in `legacy_rcon`
-path, which lives in TikTools-app and is configured there — not here.)
-
-Developers (Rust + Git): every command below is identical on Windows and
-Linux — the CLI auto-discovers `Program Files (x86)\Steam`; pass
-`--game-dir` only for secondary libraries. Quote paths with spaces.
+End users need no Rust, Python or Node.js. From a tagged release, download
+the versioned `.vpk` (+ SHA-256 + manifest) and `l4d2api-installer.exe`,
+verify the hash, then:
 
 ```powershell
-cargo test --locked --workspace
-cargo run -p l4d2api-pack -- --addon addon --out dist\tiktools-l4d2api-0.1.0.vpk --version 0.1.0
-cargo run -p l4d2api-installer -- check
-cargo run -p l4d2api-installer -- check --game-dir "D:\SteamLibrary\steamapps\common\Left 4 Dead 2"
+l4d2api-installer.exe install --game-dir "D:\SteamLibrary\steamapps\common\Left 4 Dead 2" --vpk tiktools-l4d2api-0.1.0.vpk --version 0.1.0
+l4d2api-installer.exe verify --game-dir "D:\SteamLibrary\steamapps\common\Left 4 Dead 2"
 ```
 
-What works on Windows today (verified logic, same binaries):
+Details: [docs/INSTALLATION.md](docs/INSTALLATION.md). Checking for
+workshop conflicts: `l4d2api-installer check`.
 
-- **Pack** the addon into a deterministic, validated `.vpk`.
-- **Check** your installed addons for stock-script overrides that get you
-  kicked from stock servers (`[KICK]`: measured weapon scripts;
-  `[SUSPICIOUS]`: other stock `scripts/*.txt`). Exit code `1` when a
-  kick-level conflict exists, `0` when clean — scriptable.
-- **Quarantine / restore** a colliding addon with one command each
-  (moves only that file to an owned backup dir and back; skins/sounds
-  mods are never flagged):
-  `l4d2api-installer quarantine --game-dir <dir> left4dead2/addons/workshop/2221439970.vpk`
-  then `l4d2api-installer restore --game-dir <dir>`.
-- **Install** the versioned `.vpk` into the game's `addons/`:
-  `l4d2api-installer install --game-dir <dir> --vpk dist\tiktools-l4d2api-0.1.0.vpk --version 0.1.0`.
+## Supported game modes
 
-What does NOT work yet (do not expect gameplay): `spawn_common` and
-`spawn_infected` still refuse with `CAPABILITY_UNAVAILABLE` until each
-VScript path is proven with `sv_cheats 0`. `spawn_item` and `spawn_weapon`
-are implemented against stock world-pickup entities and are pending the
-live-gate record in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
-TikTools' `local_ipc` default transport is a separate pending integration.
-For real confirmed spawns today, use the opt-in `legacy_rcon`
-dedicated-server path documented in TikTools.
+Windows 10/11, Steam L4D2 (AppID 550), single-player or locally hosted
+co-op where you are the authoritative host. Remote/community dedicated
+servers and non-host clients are refused (`NOT_HOST`); dedicated-server
+users keep the opt-in `legacy_rcon` path in TikTools-app.
+Full matrix: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-## Protocol (v1, summary)
+## Available actions
 
-`command.txt` / `result.txt` / `heartbeat.txt` live in the game's
-`left4dead2/ems/tiktools_l4d2/` sandbox. Records are `key=value` lines ending
-in an `END` sentinel plus an FNV-1a integrity field; max 1 KiB per record.
-Full format: [docs/PROTOCOL.md](docs/PROTOCOL.md).
+| Action | Arguments | Status |
+|---|---|---|
+| `test_connection` | — | working (readiness-gated) |
+| `spawn_item` | `item`, `count` 1–5 | implemented, live verification pending |
+| `spawn_weapon` | `weapon`, `count` 1–5 | implemented, live verification pending |
+| `spawn_common` | `count` 1–10 | gated (`CAPABILITY_UNAVAILABLE`) |
+| `spawn_infected` | `class`, `count` | gated (`CAPABILITY_UNAVAILABLE`) |
 
-Responses: `applied`, `rejected`, `not_ready`, `partial`, `unknown`.
-One outstanding mutation at a time; never auto re-execute after a timeout.
+Full schemas: [docs/PROTOCOL.md](docs/PROTOCOL.md). Per-capability labels:
+[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-## TikTools side
+## Python usage
 
-TikTools (`l4d2.interactive`, same action IDs: `l4d2.test_connection`,
-`l4d2.spawn_common`, `l4d2.spawn_infected`, `l4d2.spawn_item`,
-`l4d2.spawn_weapon`) consumes the version-pinned `l4d2api-client` crate as
-its default `local_ipc` transport.
-Legacy SourceMod+RCON stays as opt-in `legacy_rcon`. Integration lands in a
-separate TikTools-app PR — this repo never touches TikTools core.
+```bash
+pip install -e ./sdk/python
+```
 
-## Limits
+```python
+from pathlib import Path
+from l4d2api import L4D2Client
 
-- Windows 10/11, Steam L4D2 AppID 550, single-player or locally hosted co-op.
-- Remote/community dedicated servers and non-host clients are not controllable.
-- `sv_cheats 0` always. No injection, DLL hooks, exe patching, cheats.
+with L4D2Client(game_dir=Path(r"C:\Program Files (x86)\Steam\steamapps\common\Left 4 Dead 2")) as client:
+    client.connect()
+    print(client.status().health)
+    if "spawn_item" in client.capabilities():
+        print(client.spawn_item("first_aid_kit", 2).status)
+```
+
+SDK guide: [docs/SDK.md](docs/SDK.md). Examples: `examples/python/`.
+
+## JavaScript usage
+
+```bash
+cd sdk/javascript && npm install && npm run build
+```
+
+```javascript
+import { L4D2Client } from "l4d2api";
+
+const client = new L4D2Client({ gameDir: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Left 4 Dead 2" });
+try {
+  await client.connect();
+  console.log((await client.status()).health);
+} finally {
+  await client.close();
+}
+```
+
+SDK guide: [docs/SDK.md](docs/SDK.md). Examples: `examples/javascript/`.
+
+## Rust usage
+
+```bash
+cargo run -p l4d2api-example -- --game-dir "D:\SteamLibrary\steamapps\common\Left 4 Dead 2"
+```
+
+```rust
+let mut client = Client::new(&ipc_dir, Duration::from_secs(5), Duration::from_millis(250));
+let heartbeat = client.connect()?;
+let result = client.test_connection()?;
+```
+
+Crates: `l4d2api-protocol` (reference codec), `l4d2api-client` (session),
+`l4d2api-installer`, `l4d2api-pack`. API: [docs/API_REFERENCE.md](docs/API_REFERENCE.md).
+
+## Troubleshooting
+
+Stale heartbeat? Not host? Mod conflict kick? See
+[docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). Key rules: a timeout is
+unconfirmed (never success, never auto-retried); old generations never
+replay; concurrent SDK clients serialize on the write lock.
+
+## Development and contribution
+
+Architecture: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Contribute:
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Test matrix:
+[docs/TESTING.md](docs/TESTING.md). Windows live gate:
+[docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md). Security model:
+[docs/SECURITY.md](docs/SECURITY.md).

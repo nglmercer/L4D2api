@@ -65,6 +65,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "l4d2api-example"
+version = "0.1.0"
+dependencies = [
+ "l4d2api-client",
+ "l4d2api-protocol",
+]
+
+[[package]]
 name = "l4d2api-installer"
 version = "0.1.0"
 dependencies = [

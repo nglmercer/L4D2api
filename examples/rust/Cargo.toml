@@ -1,0 +1,14 @@
+[package]
+name = "l4d2api-example"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "l4d2api-example"
+path = "src/main.rs"
+
+[dependencies]
+l4d2api-client = { path = "../../crates/l4d2api-client" }
+l4d2api-protocol = { path = "../../crates/l4d2api-protocol" }

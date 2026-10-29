@@ -4,6 +4,7 @@ members = [
     "crates/l4d2api-client",
     "crates/l4d2api-installer",
     "crates/l4d2api-pack",
+    "examples/rust",
 ]
 resolver = "2"
 

@@ -31,6 +31,24 @@ function TikTools_IsHost() {
     }
 }
 
+// True when the handle is a living survivor-team player. Team lookup may
+// be unavailable in some scopes; then any living player counts (preserves
+// the previously working behavior instead of failing closed here -- the
+// host/round gates still guard every mutation).
+function TikTools_IsSurvivor(player) {
+    try {
+        if (player == null || !player.IsValid() || player.GetHealth() <= 0)
+            return false;
+    } catch (e) {
+        return false;
+    }
+    try {
+        return player.GetTeam() == 2;
+    } catch (e) {
+        return true;
+    }
+}
+
 function TikTools_InRound() {
     try {
         if (!TikTools_IsHost())
@@ -42,7 +60,7 @@ function TikTools_InRound() {
         // count, so single player and local co-op both qualify.
         local player = Entities.FindByClassname(null, "player");
         while (player != null) {
-            if (player.IsValid() && player.GetHealth() > 0)
+            if (TikTools_IsSurvivor(player))
                 return true;
             player = Entities.FindByClassname(player, "player");
         }

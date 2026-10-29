@@ -17,20 +17,30 @@
     ROUND_CAP = 60,
 };
 
-function TikTools_CheckLimit(kind, cooldown) {
+// Returns null when the spawn may proceed, else a refusal code.
+// Accounts the requested count against the remaining round capacity so a
+// request can never push the round total past ROUND_CAP.
+function TikTools_CheckLimit(kind, cooldown, requested) {
     local now = Time();
     if (now - ::TikToolsLimits.LAST[kind] < cooldown)
-        return false;
-    if (::TikToolsLimits.ROUND_SPAWNED >= ::TikToolsLimits.ROUND_CAP)
-        return false;
-    return true;
+        return "COOLDOWN";
+    if (::TikToolsLimits.ROUND_SPAWNED + requested > ::TikToolsLimits.ROUND_CAP)
+        return "ENTITY_CAP";
+    return null;
 }
 
 function TikTools_NoteSpawn(kind, count) {
     ::TikToolsLimits.LAST[kind] = Time();
     ::TikToolsLimits.ROUND_SPAWNED += count;
+    if (::TikToolsLimits.ROUND_SPAWNED > ::TikToolsLimits.ROUND_CAP)
+        ::TikToolsLimits.ROUND_SPAWNED = ::TikToolsLimits.ROUND_CAP;
 }
 
 function TikTools_ResetRoundCounters() {
     ::TikToolsLimits.ROUND_SPAWNED = 0;
+    ::TikToolsLimits.LAST.common = -9999.0;
+    ::TikToolsLimits.LAST.special = -9999.0;
+    ::TikToolsLimits.LAST.tank = -9999.0;
+    ::TikToolsLimits.LAST.item = -9999.0;
+    ::TikToolsLimits.LAST.weapon = -9999.0;
 }

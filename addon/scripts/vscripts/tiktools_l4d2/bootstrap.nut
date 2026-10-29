@@ -15,6 +15,10 @@
     POLL_INTERVAL = 0.35,
     BUSY_ID = null,
     LAST_ID = null,
+    SEEN_GEN = null,
+    SEEN_IDS = [],
+    MAX_SEQ = -1,
+    OWNED = [],
     CAPS = "test_connection,spawn_item,spawn_weapon",
 };
 
@@ -24,8 +28,10 @@ IncludeScript("tiktools_l4d2/limits.nut");
 IncludeScript("tiktools_l4d2/spawns.nut");
 IncludeScript("tiktools_l4d2/actions.nut");
 
-// New random generation per VScript startup; old commands from a previous
-// game generation must never execute after a relaunch or map change.
+// New generation per VScript startup; old commands from a previous game
+// generation must never execute after a relaunch or map change. Replay
+// state, per-round counters, cooldowns and owned-entity tracking all reset
+// deterministically here.
 function TikTools_NewGeneration() {
     // A monotonically increasing counter persisted to disk so a relaunch
     // or map change never reuses a previous generation token.
@@ -49,8 +55,9 @@ function TikTools_NewGeneration() {
     ::TikTools.TICK = 0;
     ::TikTools.BUSY_ID = null;
     ::TikTools.LAST_ID = null;
-    ::TikTools.LAST_POLL = 0.0;
+    TikTools_ResetReplay();
     TikTools_ResetRoundCounters();
+    TikTools_ResetOwned();
     TikTools_WriteHeartbeat();
 }
 

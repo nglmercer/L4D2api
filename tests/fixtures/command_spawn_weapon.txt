@@ -1,0 +1,9 @@
+v=1
+seq=3
+id=r_weapon_3
+gen=g-9f2c
+action=spawn_weapon
+weapon=weapon_rifle_ak47
+count=1
+crc=6e9185e0
+END

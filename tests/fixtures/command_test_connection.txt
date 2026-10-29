@@ -1,0 +1,7 @@
+v=1
+seq=1
+id=r_ping_1
+gen=g-9f2c
+action=test_connection
+crc=0a092d4e
+END

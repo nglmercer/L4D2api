@@ -61,6 +61,77 @@ fn old_generation_decodes_but_must_not_execute() {
 fn malformed_fixtures_rejected() {
     assert!(proto::decode_command(&fixture("malformed_bad_crc.txt")).is_err());
     assert!(proto::decode_command(&fixture("truncated_no_end.txt")).is_err());
+    assert!(proto::decode_command(&fixture("truncated_partial.txt")).is_err());
     assert!(proto::decode_command(&fixture("malformed_duplicate_key.txt")).is_err());
     assert!(proto::decode_command(&fixture("malformed_unknown_action.txt")).is_err());
+    assert!(proto::decode_command(&fixture("malformed_unknown_key.txt")).is_err());
+    assert!(proto::decode_command(&fixture("malformed_invalid_integer.txt")).is_err());
+    assert!(proto::decode_command(&fixture("malformed_invalid_params.txt")).is_err());
+    assert!(proto::decode_command(&fixture("unsupported_version.txt")).is_err());
+    assert!(proto::decode_command(&fixture("oversized_record.txt")).is_err());
+}
+
+#[test]
+fn per_action_command_fixtures() {
+    let test = proto::decode_command(&fixture("command_test_connection.txt")).unwrap();
+    assert_eq!(test.action, proto::Action::TestConnection);
+    let item = proto::decode_command(&fixture("command_spawn_item.txt")).unwrap();
+    assert_eq!(
+        item.action,
+        proto::Action::SpawnItem {
+            item: "first_aid_kit".into(),
+            count: 2,
+        }
+    );
+    let weapon = proto::decode_command(&fixture("command_spawn_weapon.txt")).unwrap();
+    assert_eq!(
+        weapon.action,
+        proto::Action::SpawnWeapon {
+            weapon: "weapon_rifle_ak47".into(),
+            count: 1,
+        }
+    );
+    let infected = proto::decode_command(&fixture("command_spawn_infected.txt")).unwrap();
+    assert_eq!(
+        infected.action,
+        proto::Action::SpawnInfected {
+            class: "boomer".into(),
+            count: 3,
+        }
+    );
+    // Round-trip: every valid command fixture re-encodes byte-identically.
+    for name in [
+        "command_valid.txt",
+        "command_test_connection.txt",
+        "command_spawn_item.txt",
+        "command_spawn_weapon.txt",
+        "command_spawn_infected.txt",
+    ] {
+        let raw = fixture(name);
+        let command = proto::decode_command(&raw).unwrap();
+        assert_eq!(proto::encode_command(&command).unwrap(), raw, "{name}");
+    }
+}
+
+#[test]
+fn partial_result_fixture_reports_verified_actual() {
+    let result = proto::decode_result(&fixture("result_partial.txt")).unwrap();
+    assert_eq!(result.status, proto::Status::Partial);
+    assert_eq!(result.code, "PARTIAL");
+    assert!((result.actual, result.requested) == (3, 5));
+}
+
+#[test]
+fn session_level_fixtures_decode_but_must_not_execute() {
+    // Framing is valid by design; freshness/ordering/duplication are
+    // enforced by session logic (client generation checks, game replay
+    // protection), not by the codec.
+    for name in [
+        "expired_old_generation.txt",
+        "out_of_order_command.txt",
+        "duplicate_request.txt",
+    ] {
+        proto::decode_command(&fixture(name))
+            .unwrap_or_else(|_| panic!("{name} must stay framing-valid"));
+    }
 }

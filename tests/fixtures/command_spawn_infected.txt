@@ -1,0 +1,9 @@
+v=1
+seq=4
+id=r_infected_4
+gen=g-9f2c
+action=spawn_infected
+class=boomer
+count=3
+crc=3638626d
+END

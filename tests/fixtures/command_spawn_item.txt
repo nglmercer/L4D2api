@@ -1,0 +1,9 @@
+v=1
+seq=2
+id=r_item_2
+gen=g-9f2c
+action=spawn_item
+item=first_aid_kit
+count=2
+crc=b5564bc5
+END

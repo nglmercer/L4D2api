@@ -1,0 +1,1 @@
+Decodes fine; gen=g-old differs from the live session generation, so both sides must ignore it (client drops cross-generation replies, game ignores stale commands).

@@ -1,0 +1,11 @@
+v=1
+seq=8
+id=r_12_8
+gen=g-9f2c
+status=partial
+code=PARTIAL
+requested=5
+actual=3
+diag=spawned 3 of 5 weapon_first_aid_kit
+crc=5801f5c6
+END

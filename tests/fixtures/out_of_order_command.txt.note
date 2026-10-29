@@ -1,0 +1,1 @@
+Decodes fine (seq=2); a session that already accepted seq=7 in gen=g-9f2c must reject it as out-of-order and never re-execute.

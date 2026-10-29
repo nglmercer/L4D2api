@@ -1,0 +1,1 @@
+Byte-identical to command_valid.txt; a session that already accepted id=r_12_7 must not execute it twice.

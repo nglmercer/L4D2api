@@ -6,6 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 description = "Windows Steam discovery and versioned L4D2api install/repair/uninstall"
 
+[[bin]]
+name = "l4d2api-installer"
+path = "src/main.rs"
+
 [dependencies]
 thiserror = { workspace = true }
 sha2 = { workspace = true }

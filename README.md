@@ -33,6 +33,43 @@ cargo run -p l4d2api-pack -- --addon addon --out dist/tiktools-l4d2api-0.1.0.vpk
 bash scripts/lint_nut.sh
 ```
 
+## Windows (10/11, Steam L4D2 AppID 550)
+
+Prerequisites: install Rust (rustup) and Git, then clone this repo. Every
+command below is identical on Windows and Linux — the CLI auto-discovers
+`Program Files (x86)\Steam`; pass `--game-dir` only for secondary libraries.
+Quote paths with spaces.
+
+```powershell
+cargo test --locked --workspace
+cargo run -p l4d2api-pack -- --addon addon --out dist\tiktools-l4d2api-0.1.0.vpk --version 0.1.0
+cargo run -p l4d2api-installer -- check
+cargo run -p l4d2api-installer -- check --game-dir "D:\SteamLibrary\steamapps\common\Left 4 Dead 2"
+```
+
+What works on Windows today (verified logic, same binaries):
+
+- **Pack** the addon into a deterministic, validated `.vpk`.
+- **Check** your installed addons for stock-script overrides that get you
+  kicked from stock servers (`[KICK]`: measured weapon scripts;
+  `[SUSPICIOUS]`: other stock `scripts/*.txt`). Exit code `1` when a
+  kick-level conflict exists, `0` when clean — scriptable.
+- **Quarantine / restore** a colliding addon with one command each
+  (moves only that file to an owned backup dir and back; skins/sounds
+  mods are never flagged):
+  `l4d2api-installer quarantine --game-dir <dir> left4dead2/addons/workshop/2221439970.vpk`
+  then `l4d2api-installer restore --game-dir <dir>`.
+- **Install** the versioned `.vpk` into the game's `addons/`:
+  `l4d2api-installer install --game-dir <dir> --vpk dist\tiktools-l4d2api-0.1.0.vpk --version 0.1.0`.
+
+What does NOT work yet (do not expect gameplay): the packed addon is a
+prototype — on a real Windows local campaign it reports heartbeat only
+(`ready=0`), every spawn refuses with `CAPABILITY_UNAVAILABLE` until the
+live gate in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md) proves each
+VScript path with `sv_cheats 0`. TikTools' `local_ipc` default transport
+is a separate pending integration. For real confirmed spawns today, use
+the opt-in `legacy_rcon` dedicated-server path documented in TikTools.
+
 ## Protocol (v1, summary)
 
 `command.txt` / `result.txt` / `heartbeat.txt` live in the game's

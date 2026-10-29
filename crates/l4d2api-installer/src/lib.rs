@@ -18,7 +18,7 @@ use thiserror::Error;
 pub const APP_ID: u32 = 550;
 pub const ADDON_FILE_PREFIX: &str = "tiktools-l4d2api-";
 pub const ADDON_FILE_SUFFIX: &str = ".vpk";
-pub const EMS_DIR: &str = "ems/tiktools_l4d2";
+pub const EMS_DIR: &str = "left4dead2/ems/tiktools_l4d2";
 pub const MANIFEST_FILE: &str = "ems/tiktools_l4d2/installed.manifest";
 
 #[derive(Debug, Error)]
@@ -303,6 +303,8 @@ pub fn install(game_dir: &Path, vpk_bytes: &[u8], version: &str) -> Result<Insta
 
     fs::create_dir_all(game_dir.join("left4dead2/addons"))?;
     fs::create_dir_all(game_dir.join(EMS_DIR))?;
+    // Keep existing installation manifests in their original location.
+    fs::create_dir_all(game_dir.join("ems/tiktools_l4d2"))?;
 
     // Remove the previous version's vpk on upgrade; never touch other mods.
     if let Some(old) = &previous {

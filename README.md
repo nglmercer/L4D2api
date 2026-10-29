@@ -88,13 +88,14 @@ What works on Windows today (verified logic, same binaries):
 - **Install** the versioned `.vpk` into the game's `addons/`:
   `l4d2api-installer install --game-dir <dir> --vpk dist\tiktools-l4d2api-0.1.0.vpk --version 0.1.0`.
 
-What does NOT work yet (do not expect gameplay): the packed addon is a
-prototype — on a real Windows local campaign it reports heartbeat only
-(`ready=0`), every spawn refuses with `CAPABILITY_UNAVAILABLE` until the
-live gate in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md) proves each
-VScript path with `sv_cheats 0`. TikTools' `local_ipc` default transport
-is a separate pending integration. For real confirmed spawns today, use
-the opt-in `legacy_rcon` dedicated-server path documented in TikTools.
+What does NOT work yet (do not expect gameplay): `spawn_common` and
+`spawn_infected` still refuse with `CAPABILITY_UNAVAILABLE` until each
+VScript path is proven with `sv_cheats 0`. `spawn_item` and `spawn_weapon`
+are implemented against stock world-pickup entities and are pending the
+live-gate record in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
+TikTools' `local_ipc` default transport is a separate pending integration.
+For real confirmed spawns today, use the opt-in `legacy_rcon`
+dedicated-server path documented in TikTools.
 
 ## Protocol (v1, summary)
 
@@ -109,8 +110,9 @@ One outstanding mutation at a time; never auto re-execute after a timeout.
 ## TikTools side
 
 TikTools (`l4d2.interactive`, same action IDs: `l4d2.test_connection`,
-`l4d2.spawn_common`, `l4d2.spawn_infected`, `l4d2.spawn_item`) consumes the
-version-pinned `l4d2api-client` crate as its default `local_ipc` transport.
+`l4d2.spawn_common`, `l4d2.spawn_infected`, `l4d2.spawn_item`,
+`l4d2.spawn_weapon`) consumes the version-pinned `l4d2api-client` crate as
+its default `local_ipc` transport.
 Legacy SourceMod+RCON stays as opt-in `legacy_rcon`. Integration lands in a
 separate TikTools-app PR — this repo never touches TikTools core.
 

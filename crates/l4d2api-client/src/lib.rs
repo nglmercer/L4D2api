@@ -140,17 +140,17 @@ impl Client {
         fs::write(&tmp, text.as_bytes())?;
         fs::rename(&tmp, self.dir.join(COMMAND_FILE))?;
         self.outstanding = true;
-        let result = self.wait_for_reply(id, &generation);
+        let result = self.wait_for_reply(id, command.seq, &generation);
         self.outstanding = false;
         result
     }
 
-    fn wait_for_reply(&self, id: &str, generation: &str) -> Result<TypedResponse, Error> {
+    fn wait_for_reply(&self, id: &str, seq: u64, generation: &str) -> Result<TypedResponse, Error> {
         let deadline = Instant::now() + self.timeout;
         loop {
             if let Some(text) = self.read_record(RESULT_FILE)? {
                 if let Ok(record) = proto::decode_result(&text) {
-                    if record.id == id {
+                    if record.id == id && record.seq == seq {
                         if record.generation != generation {
                             return Err(Error::StaleGeneration {
                                 expected: generation.to_owned(),
@@ -290,12 +290,12 @@ mod peer {
         fs::write(dir.join(HEARTBEAT_FILE), heartbeat_text("g-1", 1)).unwrap();
         let mut client = Client::new(&dir, Duration::from_secs(5), Duration::from_millis(5));
         client.handshake().unwrap();
-        // Stale reply for an old id + a truncated write must not resolve r_new.
+        // A stale reply with the same id but a different sequence must not resolve the request.
         fs::write(
             dir.join(RESULT_FILE),
             proto::encode_result(&proto::ResultRecord {
-                seq: 1,
-                id: "r_old".into(),
+                seq: 2,
+                id: "r_new".into(),
                 generation: "g-1".into(),
                 status: proto::Status::Applied,
                 code: "OK".into(),
@@ -310,7 +310,7 @@ mod peer {
         let peer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
             let reply = proto::encode_result(&proto::ResultRecord {
-                seq: 2,
+                seq: 1,
                 id: "r_new".into(),
                 generation: "g-1".into(),
                 status: proto::Status::Rejected,

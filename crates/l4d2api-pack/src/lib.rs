@@ -21,6 +21,11 @@ use thiserror::Error;
 pub const VPK_MAGIC: u32 = 0x55AA_1234;
 pub const VPK_VERSION: u32 = 1;
 const ENTRY_TERMINATOR: u16 = 0xFFFF;
+/// Archive index that means "the data is embedded in this VPK file". Any
+/// other value makes the engine look for a sibling `<name>_<index:03>.vpk`
+/// chunk; a single-file addon must use `0x7FFF` or it never mounts (L4D2
+/// then loops forever on the missing chunk during startup).
+pub const VPK_SINGLE_ARCHIVE: u16 = 0x7FFF;
 
 /// Extensions allowed inside the addon archive. The addon ships only its
 /// own scripts and metadata: no binaries, no Valve assets, no audio blobs.
@@ -211,7 +216,7 @@ pub fn build_vpk(files: &[ArchiveFile]) -> Result<Vec<u8>, Error> {
             push_cstr(&mut tree, stem);
             tree.extend_from_slice(&crc32(&file.data).to_le_bytes());
             tree.extend_from_slice(&0u16.to_le_bytes()); // preload bytes
-            tree.extend_from_slice(&0u16.to_le_bytes()); // archive index
+            tree.extend_from_slice(&VPK_SINGLE_ARCHIVE.to_le_bytes()); // data in this file
             tree_entries.push((tree.len() as u32, data_offsets[file.path.as_str()]));
             tree.extend_from_slice(&0u32.to_le_bytes()); // offset (patched)
             tree.extend_from_slice(&(file.data.len() as u32).to_le_bytes());
@@ -227,12 +232,13 @@ pub fn build_vpk(files: &[ArchiveFile]) -> Result<Vec<u8>, Error> {
     let data_start = 12u32
         .checked_add(tree.len() as u32)
         .ok_or_else(|| Error::Pack("archive exceeds 4 GiB".into()))?;
+    // Entry offsets are relative to the start of the data section (the byte
+    // right after the header + tree), exactly like Valve's own VPKs. Writing
+    // absolute offsets makes the engine read every file shifted by
+    // `data_start` bytes (and past EOF for the last one).
     for (pos, relative) in tree_entries {
-        let absolute = data_start
-            .checked_add(relative)
-            .ok_or_else(|| Error::Pack("archive exceeds 4 GiB".into()))?;
         let at = pos as usize;
-        tree[at..at + 4].copy_from_slice(&absolute.to_le_bytes());
+        tree[at..at + 4].copy_from_slice(&relative.to_le_bytes());
     }
 
     let mut out = Vec::with_capacity(data_start as usize + cursor as usize);
@@ -253,6 +259,7 @@ pub fn build_vpk(files: &[ArchiveFile]) -> Result<Vec<u8>, Error> {
 pub struct TreeEntry {
     pub path: String,
     pub crc: u32,
+    /// Offset relative to the start of the data section (header + tree size).
     pub offset: u32,
     pub length: u32,
 }
@@ -374,7 +381,7 @@ fn walk_tree(bytes: &[u8]) -> Result<Vec<RawEntry>, Error> {
 pub fn read_tree(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
     let mut entries = Vec::new();
     for raw in walk_tree(bytes)? {
-        if raw.preload != 0 || raw.archive != 0 {
+        if raw.preload != 0 || raw.archive != VPK_SINGLE_ARCHIVE {
             return Err(Error::Invalid(
                 "multi-archive or preload entries are not supported".into(),
             ));
@@ -403,6 +410,13 @@ pub fn validate_vpk(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
     if entries.is_empty() {
         return Err(Error::Invalid("vpk holds no files".into()));
     }
+    if bytes.len() < 12 {
+        return Err(Error::Invalid("file smaller than vpk header".into()));
+    }
+    let tree_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+    let data_start = 12usize
+        .checked_add(tree_size)
+        .ok_or_else(|| Error::Invalid("vpk tree size overflow".into()))?;
     let mut seen = std::collections::BTreeSet::new();
     for entry in &entries {
         if !seen.insert(entry.path.clone()) {
@@ -410,17 +424,19 @@ pub fn validate_vpk(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
         }
         // Reuse the safety policy: rejects escapes and non-shipped types.
         split_vpk_path(&entry.path).map_err(|e| Error::Invalid(e.to_string()))?;
-        let end = entry
-            .offset
-            .checked_add(entry.length)
+        let start = data_start
+            .checked_add(entry.offset as usize)
             .ok_or_else(|| Error::Invalid("entry range overflow".into()))?;
-        if end as usize > bytes.len() {
+        let end = start
+            .checked_add(entry.length as usize)
+            .ok_or_else(|| Error::Invalid("entry range overflow".into()))?;
+        if end > bytes.len() {
             return Err(Error::Invalid(format!(
                 "entry {} overruns file",
                 entry.path
             )));
         }
-        let data = &bytes[entry.offset as usize..end as usize];
+        let data = &bytes[start..end];
         if crc32(data) != entry.crc {
             return Err(Error::Invalid(format!("crc mismatch for {}", entry.path)));
         }
@@ -499,6 +515,38 @@ mod tests {
         assert_eq!(first, second);
         let entries = validate_vpk(&first).unwrap();
         assert_eq!(entries.len(), 3);
+    }
+
+    #[test]
+    fn entries_mark_data_as_embedded_in_this_vpk() {
+        // 0x7FFF is the only archive index that makes L4D2 read the data
+        // from the same file; 0 makes it hunt for a missing `_000.vpk`
+        // chunk and spin on the startup loading screen.
+        let bytes = build_vpk(&sample_files()).unwrap();
+        let raw = walk_tree(&bytes).unwrap();
+        assert!(!raw.is_empty());
+        for entry in raw {
+            assert_eq!(entry.archive, VPK_SINGLE_ARCHIVE, "{}", entry.path);
+        }
+    }
+
+    #[test]
+    fn entries_are_relative_to_data_section() {
+        // Valve stores EntryOffset relative to the first data byte, not as
+        // an absolute file offset. Getting this wrong shifts every read and
+        // makes the engine parse garbage scripts.
+        let bytes = build_vpk(&sample_files()).unwrap();
+        let tree_size = u32::from_le_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]) as usize;
+        let data_start = 12 + tree_size;
+        let raw = walk_tree(&bytes).unwrap();
+        let min_offset = raw.iter().map(|e| e.offset as usize).min().unwrap();
+        let max_end = raw
+            .iter()
+            .map(|e| e.offset as usize + e.length as usize)
+            .max()
+            .unwrap();
+        assert_eq!(min_offset, 0);
+        assert_eq!(data_start + max_end, bytes.len());
     }
 
     #[test]

@@ -33,6 +33,7 @@ pub const MAX_MAP_LEN: usize = 64;
 pub const COMMON_MAX: u32 = 10;
 pub const SPECIAL_MAX: u32 = 8;
 pub const ITEM_MAX: u32 = 5;
+pub const WEAPON_MAX: u32 = 5;
 
 pub const INFECTED_ALLOWLIST: [&str; 8] = [
     "tank", "witch", "smoker", "boomer", "hunter", "spitter", "jockey", "charger",
@@ -45,12 +46,37 @@ pub const ITEM_ALLOWLIST: [&str; 6] = [
     "molotov",
     "defibrillator",
 ];
+/// Stock L4D2 weapon entity classnames. `weapon_melee_spawn` is the world
+/// pickup entity (the `weapon_melee` script is not itself spawnable).
+pub const WEAPON_ALLOWLIST: [&str; 20] = [
+    "weapon_pistol",
+    "weapon_pistol_magnum",
+    "weapon_smg",
+    "weapon_smg_silenced",
+    "weapon_smg_mp5",
+    "weapon_rifle",
+    "weapon_rifle_desert",
+    "weapon_rifle_ak47",
+    "weapon_rifle_sg552",
+    "weapon_shotgun_chrome",
+    "weapon_shotgun_spas",
+    "weapon_pumpshotgun",
+    "weapon_autoshotgun",
+    "weapon_hunting_rifle",
+    "weapon_sniper_military",
+    "weapon_sniper_awp",
+    "weapon_sniper_scout",
+    "weapon_grenade_launcher",
+    "weapon_chainsaw",
+    "weapon_melee_spawn",
+];
 /// Capability tokens advertised in heartbeats.
-pub const CAPABILITY_ALLOWLIST: [&str; 4] = [
+pub const CAPABILITY_ALLOWLIST: [&str; 5] = [
     "test_connection",
     "spawn_common",
     "spawn_infected",
     "spawn_item",
+    "spawn_weapon",
 ];
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -89,6 +115,7 @@ pub enum Action {
     SpawnCommon { count: u32 },
     SpawnInfected { class: String, count: u32 },
     SpawnItem { item: String, count: u32 },
+    SpawnWeapon { weapon: String, count: u32 },
 }
 
 impl Action {
@@ -98,6 +125,7 @@ impl Action {
             Action::SpawnCommon { .. } => "spawn_common",
             Action::SpawnInfected { .. } => "spawn_infected",
             Action::SpawnItem { .. } => "spawn_item",
+            Action::SpawnWeapon { .. } => "spawn_weapon",
         }
     }
 
@@ -107,7 +135,8 @@ impl Action {
             Action::TestConnection => 0,
             Action::SpawnCommon { count }
             | Action::SpawnInfected { count, .. }
-            | Action::SpawnItem { count, .. } => *count,
+            | Action::SpawnItem { count, .. }
+            | Action::SpawnWeapon { count, .. } => *count,
         }
     }
 }
@@ -367,6 +396,7 @@ impl<'a> Fields<'a> {
                 "count" => "count",
                 "class" => "class",
                 "item" => "item",
+                "weapon" => "weapon",
                 _ => "field",
             }))
     }
@@ -438,6 +468,16 @@ pub fn encode_command(command: &Command) -> Result<String, Error> {
             lines.push(format!("item={item}"));
             lines.push(format!("count={count}"));
         }
+        Action::SpawnWeapon { weapon, count } => {
+            if !WEAPON_ALLOWLIST.contains(&weapon.as_str()) {
+                return Err(Error::Encode("unknown weapon"));
+            }
+            if !(1..=WEAPON_MAX).contains(count) {
+                return Err(Error::Encode("spawn_weapon count out of range 1-5"));
+            }
+            lines.push(format!("weapon={weapon}"));
+            lines.push(format!("count={count}"));
+        }
     }
     let record = finish(&lines);
     if record.len() > MAX_RECORD_BYTES {
@@ -446,7 +486,9 @@ pub fn encode_command(command: &Command) -> Result<String, Error> {
     Ok(record)
 }
 
-const COMMAND_KEYS: [&str; 8] = ["v", "seq", "id", "gen", "action", "count", "class", "item"];
+const COMMAND_KEYS: [&str; 9] = [
+    "v", "seq", "id", "gen", "action", "count", "class", "item", "weapon",
+];
 
 pub fn decode_command(text: &str) -> Result<Command, Error> {
     let content = split_verified(text)?;
@@ -462,11 +504,12 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             if fields.maybe("count").is_some()
                 || fields.maybe("class").is_some()
                 || fields.maybe("item").is_some()
+                || fields.maybe("weapon").is_some()
             {
                 return Err(Error::BadValue {
                     field: "action",
                     value: "test_connection".into(),
-                    reason: "takes no count/class/item",
+                    reason: "takes no count/class/item/weapon",
                 });
             }
             Action::TestConnection
@@ -480,7 +523,10 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
                     reason: "must be 1-10",
                 });
             }
-            if fields.maybe("class").is_some() || fields.maybe("item").is_some() {
+            if fields.maybe("class").is_some()
+                || fields.maybe("item").is_some()
+                || fields.maybe("weapon").is_some()
+            {
                 return Err(Error::BadValue {
                     field: "action",
                     value: "spawn_common".into(),
@@ -507,7 +553,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
                     reason: "tank is exactly 1, others 1-8",
                 });
             }
-            if fields.maybe("item").is_some() {
+            if fields.maybe("item").is_some() || fields.maybe("weapon").is_some() {
                 return Err(Error::BadValue {
                     field: "action",
                     value: "spawn_infected".into(),
@@ -536,7 +582,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
                     reason: "must be 1-5",
                 });
             }
-            if fields.maybe("class").is_some() {
+            if fields.maybe("class").is_some() || fields.maybe("weapon").is_some() {
                 return Err(Error::BadValue {
                     field: "action",
                     value: "spawn_item".into(),
@@ -545,6 +591,35 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             }
             Action::SpawnItem {
                 item: item.to_owned(),
+                count,
+            }
+        }
+        "spawn_weapon" => {
+            let weapon = fields.get("weapon")?;
+            if !WEAPON_ALLOWLIST.contains(&weapon) {
+                return Err(Error::BadValue {
+                    field: "weapon",
+                    value: weapon.to_owned(),
+                    reason: "unknown weapon",
+                });
+            }
+            let count = parse_u32("count", fields.get("count")?)?;
+            if !(1..=WEAPON_MAX).contains(&count) {
+                return Err(Error::BadValue {
+                    field: "count",
+                    value: count.to_string(),
+                    reason: "must be 1-5",
+                });
+            }
+            if fields.maybe("class").is_some() || fields.maybe("item").is_some() {
+                return Err(Error::BadValue {
+                    field: "action",
+                    value: "spawn_weapon".into(),
+                    reason: "takes only weapon+count",
+                });
+            }
+            Action::SpawnWeapon {
+                weapon: weapon.to_owned(),
                 count,
             }
         }
@@ -765,6 +840,51 @@ mod round_trip {
         };
         let text = encode_command(&command).unwrap();
         assert_eq!(decode_command(&text).unwrap(), command);
+    }
+
+    #[test]
+    fn weapon_command_round_trip() {
+        let command = Command {
+            seq: 8,
+            id: "r_12_8".into(),
+            generation: "g-9f2c".into(),
+            action: Action::SpawnWeapon {
+                weapon: "weapon_rifle_ak47".into(),
+                count: 2,
+            },
+        };
+        let text = encode_command(&command).unwrap();
+        assert_eq!(decode_command(&text).unwrap(), command);
+    }
+
+    #[test]
+    fn unknown_weapon_is_rejected() {
+        let command = Command {
+            seq: 1,
+            id: "r_1".into(),
+            generation: "g-1".into(),
+            action: Action::SpawnWeapon {
+                weapon: "weapon_not_real".into(),
+                count: 1,
+            },
+        };
+        assert!(encode_command(&command).is_err());
+    }
+
+    #[test]
+    fn weapon_capability_is_advertised() {
+        let heartbeat = Heartbeat {
+            generation: "g-1".into(),
+            addon_version: "0.1.0".into(),
+            map: "c1m1_hotel".into(),
+            round_active: true,
+            host_authority: true,
+            gameplay_ready: true,
+            capabilities: vec!["test_connection".into(), "spawn_weapon".into()],
+            tick: 1,
+        };
+        let text = encode_heartbeat(&heartbeat).unwrap();
+        assert_eq!(decode_heartbeat(&text).unwrap(), heartbeat);
     }
 
     #[test]

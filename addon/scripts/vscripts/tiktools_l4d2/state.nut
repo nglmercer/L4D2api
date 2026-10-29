@@ -1,23 +1,76 @@
 // state.nut -- authoritative host/round readiness signals.
 //
 // A heartbeat alone never means gameplay is ready. Mutations additionally
-// require IsHost() and an active round. Everything here fails closed.
+// require a listen-server host and an active round. Everything here fails
+// closed: unknown or unavailable engine state reads as "not ready".
+
+function TikTools_GetMapName() {
+    // Try the Director method first (used by stock director scripts), then
+    // the global helper. Either may be unavailable depending on scope.
+    try {
+        local name = Director.GetMapName();
+        if (name != null && name != "")
+            return name;
+    } catch (e) { }
+    try {
+        local name = GetMapName();
+        if (name != null && name != "")
+            return name;
+    } catch (e) { }
+    return "";
+}
 
 function TikTools_IsHost() {
-    // PROTOTYPE: exact host detection (netprop vs. director query) must be
-    // chosen during the live gate. Default deny until proven.
-    return false;
+    // On a listen server (including single player) this returns the host
+    // player; on a dedicated server it returns null.
+    try {
+        local host = GetListenServerHost();
+        return host != null && host.IsValid();
+    } catch (e) {
+        return false;
+    }
 }
 
 function TikTools_InRound() {
-    // PROTOTYPE: round-state source (director table / game event) must be
-    // chosen during the live gate. Default deny until proven.
+    try {
+        if (!TikTools_IsHost())
+            return false;
+        local map = TikTools_GetMapName();
+        if (map == null || map == "")
+            return false;
+        // A live round has at least one living survivor player entity. Bots
+        // count, so single player and local co-op both qualify.
+        local player = Entities.FindByClassname(null, "player");
+        while (player != null) {
+            if (player.IsValid() && player.GetHealth() > 0)
+                return true;
+            player = Entities.FindByClassname(player, "player");
+        }
+    } catch (e) {
+        return false;
+    }
     return false;
 }
 
 function TikTools_CurrentMap() {
-    // PROTOTYPE: map-name source must be chosen during the live gate.
-    return "";
+    try {
+        local name = TikTools_GetMapName();
+        if (name == null)
+            return "";
+        // The heartbeat map field must be a [A-Za-z0-9_-] token.
+        local out = "";
+        for (local i = 0; i < name.len(); i++) {
+            local c = name[i];
+            // Keep a-z, A-Z, 0-9, underscore and hyphen; map the rest to '_'.
+            local keep = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95 || c == 45;
+            out += keep ? c.tochar() : "_";
+        }
+        if (out.len() > 64)
+            out = out.slice(0, 64);
+        return out;
+    } catch (e) {
+        return "";
+    }
 }
 
 function TikTools_GameplayReady() {

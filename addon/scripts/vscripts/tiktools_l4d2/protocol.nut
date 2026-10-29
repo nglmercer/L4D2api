@@ -106,8 +106,9 @@ function TikTools_PollCommand() {
     if (raw == null || raw == "")
         return;
     local cmd = TikTools_ParseCommand(raw);
-    if (cmd == null)
-        return; // Ignore partial/malformed/stale snapshots silently.
+    if (cmd == null || cmd["id"] == ::TikTools.LAST_ID)
+        return; // Ignore partial, stale, and already processed snapshots.
+    ::TikTools.LAST_ID = cmd["id"];
     ::TikTools.BUSY_ID = cmd["id"];
     TikTools_Dispatch(cmd);
     ::TikTools.BUSY_ID = null;

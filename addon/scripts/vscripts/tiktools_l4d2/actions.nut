@@ -64,5 +64,22 @@ function TikTools_Dispatch(cmd) {
         return;
     }
 
+    if (action == "spawn_weapon") {
+        local count = ("count" in cmd) ? cmd["count"].tointeger() : -1;
+        if (count < 1 || count > 5) {
+            TikTools_Reject(cmd, "INVALID_COUNT", "count must be 1-5");
+            return;
+        }
+        if (!TikTools_CheckLimit("weapon", ::TikToolsLimits.WEAPON_COOLDOWN)) {
+            TikTools_Reject(cmd, "COOLDOWN", "weapon spawn cooling down");
+            return;
+        }
+        local result = TikTools_SpawnWeapon(("weapon" in cmd) ? cmd["weapon"] : "", count);
+        TikTools_NoteSpawn("weapon", result.actual);
+        TikTools_BuildResult(cmd, result.ok ? "applied" : "rejected",
+            result.code, count, result.actual, result.diag);
+        return;
+    }
+
     TikTools_Reject(cmd, "UNKNOWN_ACTION", "unknown action");
 }

@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/l4d2api/__init__.py
+src/l4d2api/client.py
+src/l4d2api/errors.py
+src/l4d2api/models.py
+src/l4d2api/protocol.py
+src/l4d2api.egg-info/PKG-INFO
+src/l4d2api.egg-info/SOURCES.txt
+src/l4d2api.egg-info/dependency_links.txt
+src/l4d2api.egg-info/requires.txt
+src/l4d2api.egg-info/top_level.txt
+tests/test_client.py
+tests/test_protocol.py

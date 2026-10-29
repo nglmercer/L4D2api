@@ -1,0 +1,28 @@
+name: release
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: pack
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          cargo run --locked -p l4d2api-pack -- \
+            --addon addon \
+            --out "dist/tiktools-l4d2api-${VERSION}.vpk" \
+            --version "${VERSION}"
+      - name: publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body: |
+            L4D2api ${{ github.ref_name }} — feasibility prototype.
+            Windows live gate status: see docs/WINDOWS_TESTING.md (currently blocked).

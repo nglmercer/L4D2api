@@ -1,0 +1,10 @@
+[package]
+name = "l4d2api-protocol"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Versioned text-protocol codec for L4D2api file IPC (v1)"
+
+[dependencies]
+thiserror = { workspace = true }

@@ -1,0 +1,10 @@
+"AddonInfo"
+{
+	addonSteamAppID		550
+	addonTitle			"TikTools L4D2 API"
+	addonVersion			"0.1.0"
+	addonAuthor			"TikTools"
+	addonDescription		"File-IPC gameplay addon for TikTools automations (local host only)."
+	addonContent_Campaign	"0"
+	addonContent_Survival	"0"
+}

@@ -1,0 +1,19 @@
+[workspace]
+members = [
+    "crates/l4d2api-protocol",
+    "crates/l4d2api-client",
+    "crates/l4d2api-installer",
+    "crates/l4d2api-pack",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+thiserror = "2.0.12"
+sha2 = "0.10.9"
+l4d2api-protocol = { path = "crates/l4d2api-protocol", version = "0.1.0" }

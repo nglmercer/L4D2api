@@ -1,0 +1,11 @@
+v=1
+seq=9
+id=r_12_9
+gen=g-9f2c
+status=rejected
+code=NOT_HOST
+requested=1
+actual=0
+diag=not the authoritative host
+crc=04e3dd30
+END

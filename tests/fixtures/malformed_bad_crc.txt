@@ -1,0 +1,8 @@
+v=1
+seq=7
+id=r_12_7
+gen=g-9f2c
+action=spawn_common
+count=5
+crc=00000000
+END

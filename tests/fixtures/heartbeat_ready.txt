@@ -1,0 +1,11 @@
+v=1
+gen=g-9f2c
+addon=0.1.0
+map=c1m1_hotel
+round=1
+host=1
+ready=1
+caps=test_connection,spawn_common,spawn_item
+tick=42
+crc=0bed5706
+END

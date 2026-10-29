@@ -1,0 +1,11 @@
+[package]
+name = "l4d2api-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "File-IPC session client for L4D2api (single-flight, freshness-checked)"
+
+[dependencies]
+l4d2api-protocol = { workspace = true }
+thiserror = { workspace = true }

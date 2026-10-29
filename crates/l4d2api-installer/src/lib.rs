@@ -6,6 +6,22 @@
 //! install before touching anything. Only files owned by this integration
 //! (the versioned `.vpk` plus the `ems/tiktools_l4d2/` handshake files) are
 //! ever written or removed.
+//!
+//! Canonical on-disk layout (all paths relative to the game dir):
+//!
+//! - Game VScript sandbox (read/written by the game at runtime):
+//!   `left4dead2/ems/tiktools_l4d2/` — `command.txt`, `result.txt`,
+//!   `heartbeat.txt`, `generation.txt`.
+//! - Installer-owned metadata (same directory, installer-managed):
+//!   `left4dead2/ems/tiktools_l4d2/installed.manifest`,
+//!   `quarantine.manifest`, `quarantine/`, plus the crash-recovery
+//!   `install.journal` / `installed.manifest.bak` temporaries.
+//! - Addon payload: `left4dead2/addons/tiktools-l4d2api-<version>.vpk`.
+//!
+//! Older releases wrote the manifest to `ems/tiktools_l4d2/` (relative to
+//! the game dir, missing the `left4dead2/` prefix). Reads accept that legacy
+//! location and every install migrates it forward; user data is never
+//! deleted during migration.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -19,7 +35,13 @@ pub const APP_ID: u32 = 550;
 pub const ADDON_FILE_PREFIX: &str = "tiktools-l4d2api-";
 pub const ADDON_FILE_SUFFIX: &str = ".vpk";
 pub const EMS_DIR: &str = "left4dead2/ems/tiktools_l4d2";
-pub const MANIFEST_FILE: &str = "ems/tiktools_l4d2/installed.manifest";
+/// Canonical install manifest (game-dir relative).
+pub const MANIFEST_FILE: &str = "left4dead2/ems/tiktools_l4d2/installed.manifest";
+/// Pre-0.2 manifest location; read for backwards compatibility, migrated on install.
+pub const LEGACY_MANIFEST_FILE: &str = "ems/tiktools_l4d2/installed.manifest";
+/// Crash-recovery journal and manifest backup (same directory as the manifest).
+pub const JOURNAL_FILE: &str = "left4dead2/ems/tiktools_l4d2/install.journal";
+pub const MANIFEST_BACKUP_FILE: &str = "left4dead2/ems/tiktools_l4d2/installed.manifest.bak";
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -275,12 +297,26 @@ impl InstallManifest {
     }
 }
 
-/// Currently installed manifest, if any.
+/// Currently installed manifest, if any. Reads the canonical location
+/// first, then the legacy one; migration to the canonical path happens on
+/// the next install.
 pub fn installed_manifest(game_dir: &Path) -> Result<Option<InstallManifest>, Error> {
-    match fs::read_to_string(game_dir.join(MANIFEST_FILE)) {
-        Ok(text) => Ok(Some(InstallManifest::decode(&text)?)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(Error::Io(error)),
+    for candidate in [MANIFEST_FILE, LEGACY_MANIFEST_FILE] {
+        match fs::read_to_string(game_dir.join(candidate)) {
+            Ok(text) => return Ok(Some(InstallManifest::decode(&text)?)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
+    Ok(None)
+}
+
+/// Which manifest path is in use (canonical preferred).
+fn manifest_in_use(game_dir: &Path) -> &'static str {
+    if game_dir.join(MANIFEST_FILE).is_file() {
+        MANIFEST_FILE
+    } else {
+        LEGACY_MANIFEST_FILE
     }
 }
 
@@ -289,46 +325,224 @@ pub struct InstallPlan {
     pub manifest: InstallManifest,
 }
 
-/// Install (or upgrade) a versioned `.vpk`: writes
-/// `left4dead2/addons/<vpk>`, creates the owned `ems/` dir, records the
-/// manifest. Idempotent: reinstalling the same version repairs in place.
-/// Removes a previous version's `.vpk` only when upgrading.
+/// Validate a candidate addon payload before it may touch an installation:
+/// VPK signature and version, archive tree, entry offsets/lengths,
+/// per-entry CRCs, safe archive paths, the required addon structure and the
+/// required game files. Arbitrary bytes are never installed.
+pub fn validate_install_payload(vpk_bytes: &[u8]) -> Result<(), Error> {
+    if vpk_bytes.len() < 12 {
+        return Err(Error::Manifest("payload is too small to be a VPK".into()));
+    }
+    l4d2api_pack::validate_vpk(vpk_bytes)
+        .map(|_| ())
+        .map_err(|error| Error::Manifest(format!("invalid addon vpk: {error}")))
+}
+
+/// Atomic file write within one directory: temp sibling + rename, with
+/// temp cleanup on every failure path. Retries cover only the filesystem
+/// replacement itself, never any game effect.
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    let tmp = path.with_extension("tmp-install");
+    if let Err(error) = fs::write(&tmp, bytes) {
+        let _ = fs::remove_file(&tmp);
+        return Err(Error::Io(error));
+    }
+    let mut attempts = 0;
+    loop {
+        match fs::rename(&tmp, path) {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                attempts += 1;
+                let retryable = matches!(
+                    error.kind(),
+                    io::ErrorKind::PermissionDenied
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::Interrupted
+                );
+                if !retryable || attempts >= 20 {
+                    let _ = fs::remove_file(&tmp);
+                    return Err(Error::Io(error));
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+        }
+    }
+}
+
+/// Complete or roll back an install interrupted by a crash between steps.
+/// The journal names the new payload plus the previous version's files; the
+/// manifest backup holds the previous manifest text. Safe to call when no
+/// journal exists (no-op). Never touches unrelated mods.
+fn finish_interrupted_install(game_dir: &Path) -> Result<(), Error> {
+    let journal = game_dir.join(JOURNAL_FILE);
+    let Ok(text) = fs::read_to_string(&journal) else {
+        return Ok(());
+    };
+    let mut version: Option<String> = None;
+    let mut new_rel: Option<String> = None;
+    let mut olds: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("version ") {
+            version = Some(rest.to_owned());
+        } else if let Some(rest) = line.strip_prefix("new ") {
+            new_rel = Some(rest.to_owned());
+        } else if let Some(rest) = line.strip_prefix("old ") {
+            olds.push(rest.to_owned());
+        }
+    }
+    let (Some(version), Some(new_rel)) = (version, new_rel) else {
+        let _ = fs::remove_file(&journal);
+        return Ok(());
+    };
+    // Only entries inside the addons dir are ever completed/rolled back.
+    if join_owned(Path::new("."), &new_rel).is_err() || !new_rel.starts_with("left4dead2/addons/") {
+        let _ = fs::remove_file(&journal);
+        return Ok(());
+    }
+    let new_path = game_dir.join(&new_rel);
+    let new_ok = fs::read(&new_path).is_ok_and(|bytes| validate_install_payload(&bytes).is_ok());
+    if new_ok {
+        // The new payload survived: finish the upgrade.
+        let manifest = InstallManifest {
+            version: version.clone(),
+            files: vec![OwnedFile {
+                rel: new_rel.clone(),
+                sha256: sha256_hex(&fs::read(&new_path)?),
+            }],
+        };
+        fs::create_dir_all(game_dir.join(EMS_DIR))?;
+        write_atomic(&game_dir.join(MANIFEST_FILE), manifest.encode().as_bytes())?;
+        let _ = fs::remove_file(game_dir.join(LEGACY_MANIFEST_FILE));
+        let _ = fs::remove_file(game_dir.join(MANIFEST_BACKUP_FILE));
+        for old in &olds {
+            if old != &new_rel
+                && old.ends_with(ADDON_FILE_SUFFIX)
+                && old.starts_with("left4dead2/addons/")
+                && join_owned(Path::new("."), old).is_ok()
+            {
+                let _ = fs::remove_file(game_dir.join(old));
+            }
+        }
+    } else {
+        // The new payload did not survive: drop the partial file and put
+        // the previous manifest back when it still references live files.
+        let _ = fs::remove_file(&new_path);
+        let backup = game_dir.join(MANIFEST_BACKUP_FILE);
+        if let Ok(previous) = fs::read_to_string(&backup) {
+            if InstallManifest::decode(&previous).is_ok() {
+                let _ = fs::write(
+                    game_dir.join(manifest_in_use(game_dir)),
+                    previous.as_bytes(),
+                );
+            }
+            let _ = fs::remove_file(&backup);
+        }
+    }
+    let _ = fs::remove_file(&journal);
+    Ok(())
+}
+
+/// Install (or upgrade) a versioned `.vpk`, transactionally:
+///
+/// 1. Validate the game dir, version string and VPK payload.
+/// 2. Finish or roll back any install interrupted by a crash.
+/// 3. Stage the new payload (atomic write) and record a journal.
+/// 4. Back up the previous manifest; write the new manifest.
+/// 5. Verify the installed artifact; remove obsolete owned payloads.
+/// 6. Clear the journal and backup. Any failure restores the previous
+///    working state.
+///
+/// Idempotent: reinstalling the same version repairs in place. Only files
+/// listed in the owned manifest (plus the manifest itself) are ever
+/// removed; unrelated mods are never touched.
 pub fn install(game_dir: &Path, vpk_bytes: &[u8], version: &str) -> Result<InstallPlan, Error> {
     validate_game_dir(game_dir)?;
     if version.is_empty() || version.len() > 32 {
         return Err(Error::Manifest("bad version".into()));
     }
-    let vpk_rel = format!("left4dead2/addons/{ADDON_FILE_PREFIX}{version}{ADDON_FILE_SUFFIX}");
+    validate_install_payload(vpk_bytes)?;
+    finish_interrupted_install(game_dir)?;
     let previous = installed_manifest(game_dir)?;
+
+    let vpk_rel = format!("left4dead2/addons/{ADDON_FILE_PREFIX}{version}{ADDON_FILE_SUFFIX}");
+    let expected_sha = sha256_hex(vpk_bytes);
 
     fs::create_dir_all(game_dir.join("left4dead2/addons"))?;
     fs::create_dir_all(game_dir.join(EMS_DIR))?;
-    // Keep existing installation manifests in their original location.
-    fs::create_dir_all(game_dir.join("ems/tiktools_l4d2"))?;
 
-    // Remove the previous version's vpk on upgrade; never touch other mods.
+    // Stage the new payload before touching anything owned.
+    let target = join_owned(game_dir, &vpk_rel)?;
+    write_atomic(&target, vpk_bytes)?;
+
+    // Journal the crash window: new payload on disk, old files not yet
+    // removed, manifest not yet updated.
+    let mut olds: Vec<String> = Vec::new();
     if let Some(old) = &previous {
         for file in &old.files {
-            if file.rel != vpk_rel && file.rel.ends_with(ADDON_FILE_SUFFIX) {
-                let _ = fs::remove_file(game_dir.join(&file.rel));
+            if file.rel != vpk_rel
+                && file.rel.ends_with(ADDON_FILE_SUFFIX)
+                && file.rel.starts_with("left4dead2/addons/")
+            {
+                olds.push(file.rel.clone());
             }
         }
     }
+    let mut journal = String::from("version 1\n");
+    journal.push_str(&format!("new {vpk_rel}\n"));
+    for old in &olds {
+        journal.push_str(&format!("old {old}\n"));
+    }
+    write_atomic(&game_dir.join(JOURNAL_FILE), journal.as_bytes())?;
 
-    let target = join_owned(game_dir, &vpk_rel)?;
-    // Atomic write: temp + rename.
-    let tmp = target.with_extension("vpk.tmp");
-    fs::write(&tmp, vpk_bytes)?;
-    fs::rename(&tmp, &target)?;
+    // Back up the previous manifest so a failure below can restore it.
+    let manifest_was = manifest_in_use(game_dir);
+    if let Ok(prior) = fs::read_to_string(game_dir.join(manifest_was)) {
+        write_atomic(&game_dir.join(MANIFEST_BACKUP_FILE), prior.as_bytes())?;
+    }
 
     let manifest = InstallManifest {
         version: version.to_owned(),
         files: vec![OwnedFile {
             rel: vpk_rel.clone(),
-            sha256: sha256_hex(vpk_bytes),
+            sha256: expected_sha.clone(),
         }],
     };
-    fs::write(game_dir.join(MANIFEST_FILE), manifest.encode())?;
+    let install_result = (|| -> Result<(), Error> {
+        write_atomic(&game_dir.join(MANIFEST_FILE), manifest.encode().as_bytes())?;
+        // Verify the installed artifact before removing anything old.
+        let written = fs::read(&target)?;
+        if sha256_hex(&written) != expected_sha {
+            return Err(Error::Manifest(
+                "installed payload failed verification".into(),
+            ));
+        }
+        validate_install_payload(&written)?;
+        Ok(())
+    })();
+    if let Err(error) = install_result {
+        // Restore the previous working state: drop the staged payload,
+        // put the previous manifest back, clear the journal.
+        let _ = fs::remove_file(&target);
+        let backup = game_dir.join(MANIFEST_BACKUP_FILE);
+        if let Ok(prior) = fs::read_to_string(&backup) {
+            let _ = write_atomic(&game_dir.join(manifest_was), prior.as_bytes());
+        }
+        let _ = fs::remove_file(game_dir.join(JOURNAL_FILE));
+        let _ = fs::remove_file(backup);
+        return Err(error);
+    }
+
+    // Success: remove obsolete owned payloads, migrate the legacy manifest
+    // path forward (user data is preserved; only our metadata moves), and
+    // clear the recovery files.
+    for old in &olds {
+        if join_owned(Path::new("."), old).is_ok() {
+            let _ = fs::remove_file(game_dir.join(old));
+        }
+    }
+    let _ = fs::remove_file(game_dir.join(LEGACY_MANIFEST_FILE));
+    let _ = fs::remove_file(game_dir.join(MANIFEST_BACKUP_FILE));
+    let _ = fs::remove_file(game_dir.join(JOURNAL_FILE));
     Ok(InstallPlan { vpk_rel, manifest })
 }
 
@@ -348,15 +562,54 @@ pub fn verify(game_dir: &Path) -> Result<Vec<String>, Error> {
     Ok(bad)
 }
 
-/// Repair = reinstall the same bytes; kept separate so UIs can label the
-/// action honestly and tests can pin the behavior.
+/// Repair = validate the payload, then reinstall the same version; kept
+/// separate so UIs can label the action honestly and tests can pin the
+/// behavior. Recovers interrupted installs first.
 pub fn repair(game_dir: &Path, vpk_bytes: &[u8], version: &str) -> Result<InstallPlan, Error> {
+    validate_game_dir(game_dir)?;
+    validate_install_payload(vpk_bytes)?;
+    finish_interrupted_install(game_dir)?;
     install(game_dir, vpk_bytes, version)
+}
+
+/// Point-in-time state of an installation for `status` output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InstallStatus {
+    pub installed: Option<String>,
+    pub manifest_path: Option<String>,
+    pub valid: bool,
+    pub bad_files: Vec<String>,
+    pub quarantined: usize,
+    pub conflicts: usize,
+}
+
+/// Read-only installation status: installed version (if any), payload
+/// validity, quarantine count and conflict count. Never mutates.
+pub fn status(game_dir: &Path) -> Result<InstallStatus, Error> {
+    validate_game_dir(game_dir)?;
+    let manifest = installed_manifest(game_dir)?;
+    let installed = manifest.as_ref().map(|m| m.version.clone());
+    let manifest_path = manifest
+        .as_ref()
+        .map(|_| manifest_in_use(game_dir).to_owned());
+    let bad_files = verify(game_dir).unwrap_or_default();
+    let has_manifest = manifest.is_some();
+    let quarantined = quarantined_addons(game_dir).map(|q| q.len()).unwrap_or(0);
+    let conflicts = scan_addon_conflicts(game_dir).map(|c| c.len()).unwrap_or(0);
+    Ok(InstallStatus {
+        installed,
+        manifest_path,
+        valid: has_manifest && bad_files.is_empty(),
+        bad_files,
+        quarantined,
+        conflicts,
+    })
 }
 
 /// Uninstall removes ONLY files listed in the owned manifest (plus the
 /// manifest itself and the owned `ems/` dir when empty). Unrelated mods,
-/// shared configs and other `.vpk` files are never touched.
+/// shared configs and other `.vpk` files are never touched. Recovery
+/// temporaries from an interrupted install are removed as well.
 pub fn uninstall(game_dir: &Path) -> Result<Vec<String>, Error> {
     let Some(manifest) = installed_manifest(game_dir)? else {
         return Err(Error::Manifest("not installed".into()));
@@ -371,7 +624,11 @@ pub fn uninstall(game_dir: &Path) -> Result<Vec<String>, Error> {
         }
     }
     let _ = fs::remove_file(game_dir.join(MANIFEST_FILE));
-    // Remove the owned ems dir only when it holds no foreign files.
+    let _ = fs::remove_file(game_dir.join(LEGACY_MANIFEST_FILE));
+    let _ = fs::remove_file(game_dir.join(JOURNAL_FILE));
+    let _ = fs::remove_file(game_dir.join(MANIFEST_BACKUP_FILE));
+    // Remove the owned ems dir only when it holds no foreign files (the
+    // game itself also writes heartbeat/command files here at runtime).
     let ems = game_dir.join(EMS_DIR);
     if ems.is_dir()
         && fs::read_dir(&ems)
@@ -429,8 +686,11 @@ pub fn owned_inventory(version: &str, vpk_sha256: &str) -> BTreeMap<String, Stri
 // The future local-host (`local_ipc`) transport has no client/server file
 // comparison at all, so it is inherently mod-agnostic.
 
-pub const QUARANTINE_DIR: &str = "ems/tiktools_l4d2/quarantine";
-pub const QUARANTINE_MANIFEST: &str = "ems/tiktools_l4d2/quarantine.manifest";
+pub const QUARANTINE_DIR: &str = "left4dead2/ems/tiktools_l4d2/quarantine";
+pub const QUARANTINE_MANIFEST: &str = "left4dead2/ems/tiktools_l4d2/quarantine.manifest";
+/// Pre-0.2 quarantine locations; read for backwards compatibility.
+pub const LEGACY_QUARANTINE_DIR: &str = "ems/tiktools_l4d2/quarantine";
+pub const LEGACY_QUARANTINE_MANIFEST: &str = "ems/tiktools_l4d2/quarantine.manifest";
 
 /// Stock paths whose override triggers engine consistency kicks
 /// (`scripts/*.txt`: weapon scripts and siblings). Skins, sounds and models
@@ -562,19 +822,55 @@ fn quarantine_backup_name(addon_rel: &str) -> String {
     addon_rel.replace(['/', '\\'], "!")
 }
 
+/// Our own integration payload: quarantining it would break the addon the
+/// user just installed, so it is always refused (and never auto-selected).
+fn is_own_addon(addon_rel: &str) -> bool {
+    addon_rel.starts_with("left4dead2/addons/")
+        && addon_rel
+            .rsplit('/')
+            .next()
+            .is_some_and(|name| name.starts_with(ADDON_FILE_PREFIX))
+}
+
 /// Moves a conflicting addon out of the game load path into the owned
 /// quarantine dir. Only files under `left4dead2/addons/` are eligible;
-/// anything else is refused. Reversible via [`restore_quarantined`].
+/// anything else is refused, as is this project's own integration payload.
+/// Idempotent: quarantining an already-quarantined addon returns its
+/// existing backup name. Backup-name collisions with a *different* addon
+/// are an error, never a silent overwrite. Reversible via
+/// [`restore_quarantined`]. Quarantine stays opt-in: callers (CLI/UI) must
+/// ask the user first; nothing here runs automatically.
 pub fn quarantine_addon(game_dir: &Path, addon_rel: &str) -> Result<String, Error> {
     if !(addon_rel.starts_with("left4dead2/addons/") && addon_rel.ends_with(".vpk")) {
         return Err(Error::PathEscape(addon_rel.to_owned()));
     }
+    if is_own_addon(addon_rel) {
+        return Err(Error::Manifest(format!(
+            "refusing to quarantine our own integration: {addon_rel}"
+        )));
+    }
     let source = join_owned(game_dir, addon_rel)?;
+    let backup = quarantine_backup_name(addon_rel);
+    // Idempotent: already recorded under this backup name.
+    for (known_backup, known_original) in read_quarantine_manifest(game_dir)? {
+        if known_original == addon_rel {
+            return Ok(known_backup);
+        }
+        if known_backup == backup {
+            return Err(Error::Manifest(format!(
+                "quarantine backup collision: {backup} is already used by {known_original}"
+            )));
+        }
+    }
     if !source.is_file() {
         return Err(Error::Manifest(format!("not installed: {addon_rel}")));
     }
-    let backup = quarantine_backup_name(addon_rel);
     let target = join_owned(game_dir, &format!("{QUARANTINE_DIR}/{backup}"))?;
+    if target.is_file() || target.is_symlink() {
+        return Err(Error::Manifest(format!(
+            "quarantine backup collision: {backup} already exists"
+        )));
+    }
     fs::create_dir_all(game_dir.join(QUARANTINE_DIR))?;
     fs::rename(&source, &target)?;
 
@@ -594,16 +890,11 @@ pub fn quarantine_addon(game_dir: &Path, addon_rel: &str) -> Result<String, Erro
         manifest.push_str(&line);
         manifest.push('\n');
     }
-    fs::write(&manifest_path, manifest)?;
+    write_atomic(&manifest_path, manifest.as_bytes())?;
     Ok(backup)
 }
 
-fn read_quarantine_manifest(game_dir: &Path) -> Result<Vec<(String, String)>, Error> {
-    let text = match fs::read_to_string(game_dir.join(QUARANTINE_MANIFEST)) {
-        Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(Error::Io(error)),
-    };
+fn parse_quarantine_text(text: &str) -> Result<Vec<(String, String)>, Error> {
     let mut records = Vec::new();
     for line in text.lines().filter(|line| !line.is_empty()) {
         if line == "version 1" {
@@ -620,34 +911,74 @@ fn read_quarantine_manifest(game_dir: &Path) -> Result<Vec<(String, String)>, Er
     Ok(records)
 }
 
+fn read_quarantine_manifest(game_dir: &Path) -> Result<Vec<(String, String)>, Error> {
+    // Canonical location first, then the pre-0.2 legacy one; merge and dedup
+    // so a half-migrated install still reports everything quarantined.
+    let mut records = Vec::new();
+    for candidate in [QUARANTINE_MANIFEST, LEGACY_QUARANTINE_MANIFEST] {
+        match fs::read_to_string(game_dir.join(candidate)) {
+            Ok(text) => {
+                for record in parse_quarantine_text(&text)? {
+                    if !records.contains(&record) {
+                        records.push(record);
+                    }
+                }
+            }
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(Error::Io(error)),
+        }
+    }
+    Ok(records)
+}
+
 /// Currently quarantined addons as `(backup, original_rel)` records.
 pub fn quarantined_addons(game_dir: &Path) -> Result<Vec<(String, String)>, Error> {
     read_quarantine_manifest(game_dir)
 }
 
 /// Restores every quarantined addon to its original path. Entries whose
-/// backup went missing are dropped (already restored by hand). Removes the
+/// backup went missing are dropped (already restored by hand; the op is
+/// idempotent). A destination that already exists is NEVER overwritten: the
+/// entry is kept in the manifest and reported as a conflict for the user to
+/// resolve. Every restored entry is re-validated against the quarantine
+/// scope (rejects path escapes and out-of-scope targets). Removes the
 /// manifest when empty. Returns the restored original rel paths.
 pub fn restore_quarantined(game_dir: &Path) -> Result<Vec<String>, Error> {
     let mut restored = Vec::new();
     for (backup, original) in read_quarantine_manifest(game_dir)? {
+        if !(original.starts_with("left4dead2/addons/") && original.ends_with(".vpk"))
+            || join_owned(Path::new("."), &original).is_err()
+            || backup.contains(['/', '\\'])
+        {
+            // Unsafe or out-of-scope entry: keep it recorded, restore nothing.
+            continue;
+        }
         let from = join_owned(game_dir, &format!("{QUARANTINE_DIR}/{backup}"))?;
         if !from.is_file() {
             continue;
         }
         let to = join_owned(game_dir, &original)?;
+        if to.is_file() || to.is_symlink() {
+            // Restoration conflict: preserve the existing destination.
+            continue;
+        }
         if let Some(parent) = to.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::rename(&from, &to)?;
         restored.push(original);
     }
+    // Missing backups were already restored by hand: drop them. Conflicts
+    // (existing destinations, unsafe entries) stay recorded for the user.
     let remaining = read_quarantine_manifest(game_dir)?
         .into_iter()
-        .filter(|(_, original)| !restored.contains(original))
+        .filter(|(backup, original)| {
+            !restored.contains(original) && game_dir.join(QUARANTINE_DIR).join(backup).is_file()
+        })
         .collect::<Vec<_>>();
     if remaining.is_empty() {
         let _ = fs::remove_file(game_dir.join(QUARANTINE_MANIFEST));
+        let _ = fs::remove_file(game_dir.join(LEGACY_QUARANTINE_MANIFEST));
         let quarantine = game_dir.join(QUARANTINE_DIR);
         if quarantine.is_dir()
             && fs::read_dir(&quarantine)
@@ -661,7 +992,8 @@ pub fn restore_quarantined(game_dir: &Path) -> Result<Vec<String>, Error> {
         for (backup, original) in &remaining {
             manifest.push_str(&format!("{backup}  {original}\n"));
         }
-        fs::write(game_dir.join(QUARANTINE_MANIFEST), manifest)?;
+        write_atomic(&game_dir.join(QUARANTINE_MANIFEST), manifest.as_bytes())?;
+        let _ = fs::remove_file(game_dir.join(LEGACY_QUARANTINE_MANIFEST));
     }
     Ok(restored)
 }
@@ -717,11 +1049,29 @@ mod tests {
         let _ = fs::remove_dir_all(&steam);
     }
 
+    fn valid_vpk_bytes() -> Vec<u8> {
+        let files = vec![
+            l4d2api_pack::ArchiveFile {
+                path: "addoninfo.txt".into(),
+                data: b"addon".to_vec(),
+            },
+            l4d2api_pack::ArchiveFile {
+                path: "scripts/vscripts/director_base_addon.nut".into(),
+                data: b"// base".to_vec(),
+            },
+            l4d2api_pack::ArchiveFile {
+                path: "scripts/vscripts/tiktools_l4d2/bootstrap.nut".into(),
+                data: b"// bootstrap".to_vec(),
+            },
+        ];
+        l4d2api_pack::build_vpk(&files).unwrap()
+    }
+
     #[test]
     fn install_verify_uninstall_keeps_foreign_mods() {
         let game = test_game_dir("lifecycle");
-        let vpk = b"fake vpk bytes v1";
-        install(&game, vpk, "0.1.0").unwrap();
+        let vpk = valid_vpk_bytes();
+        install(&game, &vpk, "0.1.0").unwrap();
         assert!(verify(&game).unwrap().is_empty());
         // Corrupt the installed file: verify must report it.
         fs::write(
@@ -730,11 +1080,91 @@ mod tests {
         )
         .unwrap();
         assert_eq!(verify(&game).unwrap().len(), 1);
-        repair(&game, vpk, "0.1.0").unwrap();
+        repair(&game, &vpk, "0.1.0").unwrap();
         assert!(verify(&game).unwrap().is_empty());
         let removed = uninstall(&game).unwrap();
         assert_eq!(removed.len(), 1);
         // Foreign mod survives.
+        assert!(game.join("left4dead2/addons/someone-else.vpk").is_file());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn rejects_arbitrary_bytes_as_vpk() {
+        let game = test_game_dir("badvpk");
+        assert!(install(&game, b"fake vpk bytes v1", "0.1.0").is_err());
+        assert!(install(&game, b"", "0.1.0").is_err());
+        // Nothing owned was written.
+        assert!(installed_manifest(&game).unwrap().is_none());
+        assert!(!game
+            .join("left4dead2/addons/tiktools-l4d2api-0.1.0.vpk")
+            .exists());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn failed_upgrade_preserves_previous_install() {
+        let game = test_game_dir("upgrade");
+        let vpk = valid_vpk_bytes();
+        install(&game, &vpk, "0.1.0").unwrap();
+        // An invalid upgrade payload must leave 0.1.0 fully working.
+        assert!(install(&game, b"not a vpk", "0.2.0").is_err());
+        let manifest = installed_manifest(&game).unwrap().unwrap();
+        assert_eq!(manifest.version, "0.1.0");
+        assert!(verify(&game).unwrap().is_empty());
+        assert!(game
+            .join("left4dead2/addons/tiktools-l4d2api-0.1.0.vpk")
+            .is_file());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn legacy_manifest_location_is_migrated() {
+        let game = test_game_dir("legacy");
+        let vpk = valid_vpk_bytes();
+        // Simulate a pre-0.2 install: payload plus legacy manifest only.
+        let rel = "left4dead2/addons/tiktools-l4d2api-0.1.0.vpk";
+        fs::write(game.join(rel), &vpk).unwrap();
+        let manifest = InstallManifest {
+            version: "0.1.0".into(),
+            files: vec![OwnedFile {
+                rel: rel.into(),
+                sha256: sha256_hex(&vpk),
+            }],
+        };
+        fs::create_dir_all(game.join("ems/tiktools_l4d2")).unwrap();
+        fs::write(game.join(LEGACY_MANIFEST_FILE), manifest.encode()).unwrap();
+        // Legacy reads work, and the next install migrates forward.
+        assert_eq!(installed_manifest(&game).unwrap().unwrap().version, "0.1.0");
+        install(&game, &vpk, "0.1.0").unwrap();
+        assert!(game.join(MANIFEST_FILE).is_file());
+        assert!(!game.join(LEGACY_MANIFEST_FILE).exists());
+        assert!(verify(&game).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn interrupted_install_recovers_on_next_run() {
+        let game = test_game_dir("interrupted");
+        let vpk = valid_vpk_bytes();
+        install(&game, &vpk, "0.1.0").unwrap();
+        // Simulate a crash between staging the new payload and updating the
+        // manifest: new file on disk, journal present, old manifest intact.
+        let new_rel = "left4dead2/addons/tiktools-l4d2api-0.2.0.vpk";
+        fs::write(game.join(new_rel), &vpk).unwrap();
+        fs::write(
+            game.join(JOURNAL_FILE),
+            format!("version 1\nnew {new_rel}\nold left4dead2/addons/tiktools-l4d2api-0.1.0.vpk\n"),
+        )
+        .unwrap();
+        install(&game, &vpk, "0.2.0").unwrap();
+        let manifest = installed_manifest(&game).unwrap().unwrap();
+        assert_eq!(manifest.version, "0.2.0");
+        assert!(verify(&game).unwrap().is_empty());
+        // Old payload cleaned up, foreign mod untouched.
+        assert!(!game
+            .join("left4dead2/addons/tiktools-l4d2api-0.1.0.vpk")
+            .exists());
         assert!(game.join("left4dead2/addons/someone-else.vpk").is_file());
         let _ = fs::remove_dir_all(&game);
     }
@@ -760,8 +1190,47 @@ mod tests {
         let _ = fs::remove_dir_all(&game);
         fs::create_dir_all(game.join("left4dead2/addons")).unwrap();
         fs::write(game.join("left4dead2.exe"), b"exe").unwrap();
-        install(&game, b"vpk", "0.1.0").unwrap();
+        let vpk = valid_vpk_bytes();
+        install(&game, &vpk, "0.1.0").unwrap();
         assert!(verify(&game).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn quarantine_refuses_own_addon_and_repeats_safely() {
+        let game = conflict_game_dir("qown");
+        let own_rel = "left4dead2/addons/tiktools-l4d2api-0.1.0.vpk";
+        fs::write(game.join(own_rel), b"own payload").unwrap();
+        assert!(quarantine_addon(&game, own_rel).is_err());
+        assert!(game.join(own_rel).is_file());
+
+        // Idempotent: quarantining twice returns the same backup, moves once.
+        let addon = "left4dead2/addons/workshop/script-override-mod.vpk";
+        let first = quarantine_addon(&game, addon).unwrap();
+        let second = quarantine_addon(&game, addon).unwrap();
+        assert_eq!(first, second);
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn restore_never_overwrites_existing_destination() {
+        let game = conflict_game_dir("qconflict");
+        let addon = "left4dead2/addons/workshop/script-override-mod.vpk";
+        let before = fs::read(game.join(addon)).unwrap();
+        quarantine_addon(&game, addon).unwrap();
+        // A new mod lands at the same path before restore runs.
+        fs::write(game.join(addon), b"replacement mod").unwrap();
+        let restored = restore_quarantined(&game).unwrap();
+        assert!(restored.is_empty());
+        assert_eq!(fs::read(game.join(addon)).unwrap(), b"replacement mod");
+        // The quarantined original is still recorded for the user to resolve.
+        assert_eq!(quarantined_addons(&game).unwrap().len(), 1);
+        // And the backup bytes are intact.
+        let (backup, _) = &quarantined_addons(&game).unwrap()[0];
+        assert_eq!(
+            fs::read(game.join(QUARANTINE_DIR).join(backup)).unwrap(),
+            before
+        );
         let _ = fs::remove_dir_all(&game);
     }
 

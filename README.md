@@ -25,7 +25,7 @@ tests/fixtures/         canonical valid/malformed/truncated protocol records
 docs/                   architecture, protocol, install, security, test plan
 ```
 
-## Quick start
+## Quick start (developers)
 
 ```bash
 cargo test --locked --workspace
@@ -33,12 +33,21 @@ cargo run -p l4d2api-pack -- --addon addon --out dist/tiktools-l4d2api-0.1.0.vpk
 bash scripts/lint_nut.sh
 ```
 
+On Windows the `cargo` commands are identical (PowerShell: use
+`dist\...` paths); `scripts/lint_nut.sh` runs in Git Bash, which ships
+with Git for Windows. End users skip all of this — see Releases below.
+
 ## Windows (10/11, Steam L4D2 AppID 550)
 
-Prerequisites: install Rust (rustup) and Git, then clone this repo. Every
-command below is identical on Windows and Linux — the CLI auto-discovers
-`Program Files (x86)\Steam`; pass `--game-dir` only for secondary libraries.
-Quote paths with spaces.
+**End users: no Rust, no build.** Every tagged release attaches ready-made
+artifacts: the versioned `.vpk` (+ SHA-256 + manifest) and the Windows
+CLIs `l4d2api-installer.exe` / `l4d2api-pack.exe` (+ checksums), built on
+`windows-latest`. Download, verify the hash, and run the commands below
+with `l4d2api-installer.exe` instead of `cargo run -p l4d2api-installer --`.
+
+Developers (Rust + Git): every command below is identical on Windows and
+Linux — the CLI auto-discovers `Program Files (x86)\Steam`; pass
+`--game-dir` only for secondary libraries. Quote paths with spaces.
 
 ```powershell
 cargo test --locked --workspace

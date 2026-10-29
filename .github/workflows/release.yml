@@ -5,24 +5,57 @@ on:
       - "v*"
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bins: "l4d2api-installer l4d2api-pack"
+          - os: windows-latest
+            bins: "l4d2api-installer.exe l4d2api-pack.exe"
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: pack
+      - name: pack and build (Linux)
+        if: runner.os != 'Windows'
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           cargo run --locked -p l4d2api-pack -- \
             --addon addon \
             --out "dist/tiktools-l4d2api-${VERSION}.vpk" \
             --version "${VERSION}"
-      - name: publish
-        uses: softprops/action-gh-release@v2
+          cargo build --locked --release -p l4d2api-installer -p l4d2api-pack
+          cp target/release/l4d2api-installer target/release/l4d2api-pack dist/
+          (cd dist && sha256sum tiktools-l4d2api-*.vpk l4d2api-installer l4d2api-pack > SHA256SUMS.txt)
+      - name: pack and build (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Version = $env:GITHUB_REF_NAME -replace '^v',''
+          cargo run --locked -p l4d2api-pack -- --addon addon --out "dist\tiktools-l4d2api-${Version}.vpk" --version "${Version}"
+          cargo build --locked --release -p l4d2api-installer -p l4d2api-pack
+          Copy-Item "target\release\l4d2api-installer.exe","target\release\l4d2api-pack.exe" dist\
+          Get-ChildItem dist\l4d2api-*.exe | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Out-File -Encoding ascii dist\SHA256SUMS-windows.txt
+      - uses: actions/upload-artifact@v4
         with:
-          files: dist/*
+          name: release-${{ matrix.os }}
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - name: drop duplicated VPK (deterministic builds are byte-identical)
+        run: rm -f dist/release-windows-latest/tiktools-l4d2api-*.vpk dist/release-windows-latest/*.manifest.txt dist/release-windows-latest/*.sha256
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
           body: |
             L4D2api ${{ github.ref_name }} — feasibility prototype.
             Windows live gate status: see docs/WINDOWS_TESTING.md (currently blocked).

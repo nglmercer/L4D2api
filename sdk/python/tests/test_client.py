@@ -70,6 +70,22 @@ class Peer(threading.Thread):
 
 
 class TestClient(unittest.TestCase):
+    def test_game_records_with_trailing_nul_and_restarted_sequence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            (directory / "heartbeat.txt").write_text(heartbeat_text() + "\0")
+            (directory / "result.txt").write_text(protocol.encode_result(protocol.ResultRecord(
+                seq=42, id="old", generation="g-1", status="applied", code="OK",
+                requested=0, actual=0, diag="")) + "\0")
+            client = L4D2Client(ipc_dir=directory, timeout=1, poll_interval=0.005)
+            client.connect()
+            peer = Peer(directory)
+            peer.start()
+            result = client.test_connection()
+            peer.join()
+            self.assertEqual(result.code, "OK")
+            self.assertGreater(protocol.decode_command((directory / "command.txt").read_text()).seq, 42)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)

@@ -154,8 +154,9 @@ function TikTools_SpawnBunch(classname, count) {
             local table = {
                 origin = anchorOrigin + offsets[i % offsets.len()] + Vector(0, 0, 8),
                 angles = Vector(0, 0, 0),
-                solid = "6", // Vphysics: pickup behaves like a map-placed item.
             };
+            if (classname != "infected")
+                table.solid <- "6"; // Vphysics for pickups only.
             if (classname == "weapon_melee_spawn") {
                 table.melee_weapon <- "any";
                 table.spawnflags <- 3;
@@ -178,8 +179,8 @@ function TikTools_SpawnBunch(classname, count) {
 }
 
 function TikTools_SpawnCommon(count) {
-    // ZSpawn semantics with sv_cheats 0 are still unproven; keep gated.
-    return { ok = false, actual = 0, code = "CAPABILITY_UNAVAILABLE", diag = "common spawn unverified" };
+    // Count only engine-confirmed entity handles; live behavior remains experimental.
+    return TikTools_SpawnBunch("infected", count);
 }
 
 function TikTools_SpawnSpecial(classname, count) {

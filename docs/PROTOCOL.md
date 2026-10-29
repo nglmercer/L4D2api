@@ -127,7 +127,7 @@ A heartbeat alone never means gameplay ready: `ready=1` additionally
 requires host authority and an active round, and clients freshness-check
 the file age plus `tick` progression — a valid but old heartbeat reads as
 stale, never ready. `caps` advertises per-capability support so unverified
-spawns stay gated (`spawn_common`/`spawn_infected` are absent from `caps`
+special spawns stay gated (`spawn_infected` is absent from `caps`
 until proven). Poll conservatively (~250-500 ms in an active session); no
 per-frame disk reads.
 

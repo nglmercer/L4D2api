@@ -23,7 +23,7 @@ import {
   TransportError,
   UnsupportedCapabilityError,
 } from "./errors.js";
-import { decodeHeartbeat, decodeResult, encodeCommand } from "./protocol.js";
+import { decodeCommand, decodeHeartbeat, decodeResult, encodeCommand } from "./protocol.js";
 import type {
   ActionResult,
   ClientOptions,
@@ -84,7 +84,8 @@ export class L4D2Client {
 
   private async readFile(name: string): Promise<string | null> {
     try {
-      return await fs.readFile(path.join(this.dir, name), "ascii");
+      const text = await fs.readFile(path.join(this.dir, name), "ascii");
+      return (name === HEARTBEAT_FILE || name === RESULT_FILE) && text.endsWith("\0") ? text.slice(0, -1) : text;
     } catch (error: unknown) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
       throw new TransportError(String(error));
@@ -301,6 +302,18 @@ export class L4D2Client {
     signal?: AbortSignal,
   ): Promise<ActionResult> {
     await this.ensureReadyFor(action);
+    // Recover the previous sequence while holding the cross-process lock.
+    for (const [name, decode] of [[COMMAND_FILE, decodeCommand], [RESULT_FILE, decodeResult]] as const) {
+      const raw = await this.readFile(name);
+      if (raw !== null) {
+        try {
+          const previous = decode(raw);
+          if (previous.generation === generation) this.seq = Math.max(this.seq, previous.seq);
+        } catch (error) {
+          if (!(error instanceof ProtocolError)) throw error;
+        }
+      }
+    }
     this.seq += 1;
     const text = encodeCommand({ seq: this.seq, id: requestId, generation, action, params });
     await this.writeCommandAtomic(text, requestId);

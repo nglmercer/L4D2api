@@ -80,7 +80,8 @@ class L4D2Client:
     # -- low-level file access ----------------------------------------------
     def _read(self, name: str) -> str | None:
         try:
-            return (self._dir / name).read_text(encoding="ascii")
+            text = (self._dir / name).read_text(encoding="ascii")
+            return text.removesuffix("\0") if name in (HEARTBEAT_FILE, RESULT_FILE) else text
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -269,6 +270,17 @@ class L4D2Client:
         self, request_id: str, action: str, generation: str, params: dict[str, str]
     ) -> ActionResult:
         self.ensure_ready_for(action)
+        # The lock serializes all SDKs. Recover the last sequence even after
+        # a client restart or a timeout with an unconfirmed game effect.
+        for name, decode in ((COMMAND_FILE, protocol.decode_command), (RESULT_FILE, protocol.decode_result)):
+            raw = self._read(name)
+            if raw is not None:
+                try:
+                    previous = decode(raw)
+                    if previous.generation == generation:
+                        self._seq = max(self._seq, previous.seq)
+                except protocol.ProtocolError:
+                    pass
         self._seq += 1
         command = protocol.Command(
             seq=self._seq, id=request_id, generation=generation,

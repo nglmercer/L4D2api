@@ -26,7 +26,7 @@ design), `blocked` (cannot work by construction).
 | `test_connection` | `experimental` | readiness-gated; user-reported working, evidence still required |
 | `spawn_item` | `experimental` | stock world pickups; user-reported working, evidence still required |
 | `spawn_weapon` | `experimental` | stock world pickups; user-reported working, evidence still required |
-| `spawn_common` | `unsupported` | gated `CAPABILITY_UNAVAILABLE` until proven with `sv_cheats 0` |
+| `spawn_common` | `experimental` | engine entity spawning; live verification pending |
 | `spawn_infected` | `unsupported` | gated `CAPABILITY_UNAVAILABLE` until proven with `sv_cheats 0` |
 
 The user reports the integration is now working in their local-host

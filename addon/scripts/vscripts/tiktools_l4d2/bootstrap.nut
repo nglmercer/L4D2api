@@ -19,7 +19,7 @@
     SEEN_IDS = [],
     MAX_SEQ = -1,
     OWNED = [],
-    CAPS = "test_connection,spawn_item,spawn_weapon",
+    CAPS = "test_connection,spawn_common,spawn_item,spawn_weapon",
 };
 
 IncludeScript("tiktools_l4d2/state.nut");

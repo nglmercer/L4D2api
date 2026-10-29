@@ -23,9 +23,8 @@ Transport is files, not HTTP: the SDKs and the game exchange
 - **Game side**: `test_connection`, `spawn_item`, `spawn_weapon` against
   stock world-pickup entities (implemented; live-game verification pending
   the recorded evidence gate — see below).
-- `spawn_common` / `spawn_infected` are implemented but stay
-  capability-gated (`CAPABILITY_UNAVAILABLE`) until proven with
-  `sv_cheats 0` on the real game. They are not advertised as working.
+- `spawn_common` is experimental and requires live-game verification;
+  `spawn_infected` remains capability-gated.
 
 User report (unrecorded): the reporter states the L4D2 integration is now
 working in their local-host session. That report is tracked as
@@ -62,7 +61,7 @@ Full matrix: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 | `test_connection` | — | working (readiness-gated) |
 | `spawn_item` | `item`, `count` 1–5 | implemented, live verification pending |
 | `spawn_weapon` | `weapon`, `count` 1–5 | implemented, live verification pending |
-| `spawn_common` | `count` 1–10 | gated (`CAPABILITY_UNAVAILABLE`) |
+| `spawn_common` | `count` 1–10 | experimental; live verification pending |
 | `spawn_infected` | `class`, `count` | gated (`CAPABILITY_UNAVAILABLE`) |
 
 Full schemas: [docs/PROTOCOL.md](docs/PROTOCOL.md). Per-capability labels:

@@ -186,7 +186,12 @@ impl Client {
     fn read_record(&self, file: &str) -> Result<Option<String>, Error> {
         let path = self.dir.join(file);
         match fs::read_to_string(&path) {
-            Ok(text) => Ok(Some(text)),
+            Ok(mut text) => {
+                if (file == HEARTBEAT_FILE || file == RESULT_FILE) && text.ends_with('\0') {
+                    text.pop();
+                }
+                Ok(Some(text))
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(Error::Io(error)),
         }
@@ -513,6 +518,22 @@ impl Client {
         // Fail fast on capability/version drift before touching command.txt.
         let action_name = action.id().to_owned();
         self.ensure_ready_for(&action_name)?;
+        // Recover the last sequence under the cross-process lock, including
+        // commands whose reply timed out and whose outcome remains unknown.
+        if let Some(text) = self.read_record(COMMAND_FILE)? {
+            if let Ok(previous) = proto::decode_command(&text) {
+                if previous.generation == generation {
+                    self.seq = self.seq.max(previous.seq);
+                }
+            }
+        }
+        if let Some(text) = self.read_record(RESULT_FILE)? {
+            if let Ok(previous) = proto::decode_result(&text) {
+                if previous.generation == generation {
+                    self.seq = self.seq.max(previous.seq);
+                }
+            }
+        }
         self.seq += 1;
         let command = proto::Command {
             seq: self.seq,
@@ -739,7 +760,7 @@ mod peer {
         let peer = std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
             let reply = proto::encode_result(&proto::ResultRecord {
-                seq: 1,
+                seq: 3,
                 id: "r_new".into(),
                 generation: "g-1".into(),
                 status: proto::Status::Rejected,

@@ -10,7 +10,7 @@
 | Incorrect game directory | Discovery picked nothing / secondary library | Pass `--game-dir`; unrelated folders are rejected |
 | Game not ready | Menu, loading, no active round | Create a local/listen-hosted campaign; `status()` reads `connected` until the round is live |
 | Non-host session | Joined someone else's server | Host the lobby yourself (`NOT_HOST` otherwise) |
-| Unsupported action | Gated capability (`spawn_common`, `spawn_infected`) | Check `capabilities()` first; unadvertised actions raise before any write |
+| Unsupported action | Gated capability (`spawn_infected`) | Check `capabilities()` first; unadvertised actions raise before any write |
 | Timeout without confirmed execution | Ambiguous: effect may have happened | Report as unconfirmed; never auto-retry a mutation |
 | Concurrent SDK clients | Second writer while one holds the lock | `Busy` (same process) / `Locked` (another process); serialize, don't retry blindly |
 | Filesystem permissions | Locked files / antivirus interference | Close the game, retry; `repair`; Windows retries transient sharing violations |

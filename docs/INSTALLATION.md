@@ -6,9 +6,15 @@
    `appmanifest_550.acf`), validates `left4dead2/` plus the game executable,
    and installs the versioned `.vpk` under `left4dead2/addons/` — creating
    only the owned `left4dead2/ems/tiktools_l4d2/` files.
-3. Launch L4D2 normally through Steam, create a local/listen-hosted campaign.
+3. If you join someone else's stock dedicated server with workshop mods,
+   TikTools scans your addons automatically and offers one-click quarantine
+   for any that override stock scripts (they would kick you); your mods
+   are restored afterwards. Mods that only change skins/sounds are never
+   touched. Your own server needs `sv_consistency 0` once — then any mod
+   joins with zero client action.
+4. Launch L4D2 normally through Steam, create a local/listen-hosted campaign.
    TikTools shows **Connected — gameplay ready**.
-4. Run an automation; TikTools reports the game-observed result.
+5. Run an automation; TikTools reports the game-observed result.
 
 No terminal, `.bat`/`.sh`, SourceMod, MetaMod, dedicated server, manual RCON
 password, open firewall port, or extra background service. If discovery

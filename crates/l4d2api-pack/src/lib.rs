@@ -289,8 +289,19 @@ fn read_u32(data: &[u8], pos: &mut usize) -> Result<u32, Error> {
     Ok(value)
 }
 
-/// Parse the tree; returns entries with logical `dir/name.ext` paths.
-pub fn read_tree(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
+struct RawEntry {
+    path: String,
+    crc: u32,
+    preload: u16,
+    archive: u16,
+    offset: u32,
+    length: u32,
+}
+
+/// Walk the tree without judging entry kinds. Multi-archive and preload
+/// entries (normal in stock game VPKs) are reported as-is; callers that
+/// need data decide what they support.
+fn walk_tree(bytes: &[u8]) -> Result<Vec<RawEntry>, Error> {
     if bytes.len() < 12 {
         return Err(Error::Invalid("file smaller than vpk header".into()));
     }
@@ -333,20 +344,21 @@ pub fn read_tree(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
                 if terminator != ENTRY_TERMINATOR {
                     return Err(Error::Invalid("bad vpk entry terminator".into()));
                 }
-                if preload != 0 || archive != 0 {
-                    return Err(Error::Invalid(
-                        "multi-archive or preload entries are not supported".into(),
-                    ));
+                if preload as usize > tree.len().saturating_sub(pos) {
+                    return Err(Error::Invalid("preload overruns vpk tree".into()));
                 }
+                pos += preload as usize;
                 // " " is the on-disk encoding of the archive root.
                 let path = if dir == " " {
                     format!("{name}.{extension}")
                 } else {
                     format!("{dir}/{name}.{extension}")
                 };
-                entries.push(TreeEntry {
+                entries.push(RawEntry {
                     path,
                     crc,
+                    preload,
+                    archive,
                     offset,
                     length,
                 });
@@ -354,6 +366,35 @@ pub fn read_tree(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
         }
     }
     Ok(entries)
+}
+
+/// Parse the tree; returns entries with logical `dir/name.ext` paths.
+/// Only single-archive, preload-free entries are supported (the addon
+/// contract); stock game archives need [`read_tree_paths`].
+pub fn read_tree(bytes: &[u8]) -> Result<Vec<TreeEntry>, Error> {
+    let mut entries = Vec::new();
+    for raw in walk_tree(bytes)? {
+        if raw.preload != 0 || raw.archive != 0 {
+            return Err(Error::Invalid(
+                "multi-archive or preload entries are not supported".into(),
+            ));
+        }
+        entries.push(TreeEntry {
+            path: raw.path,
+            crc: raw.crc,
+            offset: raw.offset,
+            length: raw.length,
+        });
+    }
+    Ok(entries)
+}
+
+/// List every logical path in a VPK tree, tolerating the multi-archive and
+/// preload entries stock game archives use. No data is read. Used for
+/// install-time scans (stock manifests, addon conflict detection), never
+/// for packing validation.
+pub fn read_tree_paths(bytes: &[u8]) -> Result<Vec<String>, Error> {
+    Ok(walk_tree(bytes)?.into_iter().map(|raw| raw.path).collect())
 }
 
 /// Validate archive contents against the addon contract.

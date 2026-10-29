@@ -9,3 +9,4 @@ description = "Windows Steam discovery and versioned L4D2api install/repair/unin
 [dependencies]
 thiserror = { workspace = true }
 sha2 = { workspace = true }
+l4d2api-pack = { path = "../l4d2api-pack", version = "0.1.0" }

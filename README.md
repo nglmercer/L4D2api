@@ -19,7 +19,7 @@ addon/                  VScript addon source (packed into the .vpk)
 crates/
   l4d2api-protocol/     v1 text-protocol codec, validation, fixtures
   l4d2api-client/       file-IPC session client (single-flight, freshness)
-  l4d2api-installer/    Windows Steam discovery + versioned install/repair/uninstall
+  l4d2api-installer/    Windows Steam discovery + versioned install/repair/uninstall + workshop conflict quarantine
   l4d2api-pack/         deterministic VPK v1 packer (lib + CLI)
 tests/fixtures/         canonical valid/malformed/truncated protocol records
 docs/                   architecture, protocol, install, security, test plan

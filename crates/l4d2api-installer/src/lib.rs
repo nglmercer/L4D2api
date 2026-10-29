@@ -7,7 +7,7 @@
 //! (the versioned `.vpk` plus the `ems/tiktools_l4d2/` handshake files) are
 //! ever written or removed.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -408,6 +408,262 @@ pub fn owned_inventory(version: &str, vpk_sha256: &str) -> BTreeMap<String, Stri
     ])
 }
 
+// --- Workshop mod-conflict handling --------------------------------------
+//
+// A workshop addon that overrides a stock consistency-critical file (e.g.
+// `scripts/weapon_rifle_sg552.txt`, measured live 2026-10-29: client kicked
+// with "Server is enforcing consistency for this file") cannot join a stock
+// dedicated server, with any RCON password or TikTools version. Two durable
+// fixes exist and this module implements the client-side one:
+//
+// - Own server: set `sv_consistency 0` (operator opt-in; private servers).
+//   Zero client action, any mod works. No code needed beyond the setting.
+// - Someone else's stock server: detect the colliding addon(s) and
+//   quarantine them with one click; restore them afterwards. Implemented
+//   below: detection is automatic, quarantine/restore are reversible and
+//   never touch files outside `left4dead2/addons/` or files TikTools did
+//   not quarantine itself.
+//
+// The future local-host (`local_ipc`) transport has no client/server file
+// comparison at all, so it is inherently mod-agnostic.
+
+pub const QUARANTINE_DIR: &str = "ems/tiktools_l4d2/quarantine";
+pub const QUARANTINE_MANIFEST: &str = "ems/tiktools_l4d2/quarantine.manifest";
+
+/// Stock paths whose override triggers engine consistency kicks
+/// (`scripts/*.txt`: weapon scripts and siblings). Skins, sounds and models
+/// do not kick with `sv_pure 0` and are deliberately NOT flagged.
+fn is_consistency_critical(logical_path: &str) -> bool {
+    logical_path.starts_with("scripts/") && logical_path.ends_with(".txt")
+}
+
+/// How seriously to take a stock-script override.
+///
+/// Only the weapon-script family is a *measured* kick trigger (live:
+/// `scripts/weapon_rifle_sg552.txt` vs stock server, 2026-10-29). Other
+/// stock `scripts/*.txt` overrides are reported as suspicious: they ride
+/// the same engine consistency path, but quarantining HUD-only mods on
+/// sight would be overreach — surface them, let the user decide.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictKind {
+    /// `scripts/weapon_*.txt`: measured consistency kick.
+    WeaponScript,
+    /// Other stock `scripts/*.txt`: suspicious, user decides.
+    StockScript,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AddonConflict {
+    /// Addon file relative to the game dir, e.g.
+    /// `left4dead2/addons/workshop/script-override-mod.vpk`.
+    pub addon_rel: String,
+    /// Stock path it overrides, e.g. `scripts/weapon_rifle_sg552.txt`.
+    pub stock_path: String,
+    pub kind: ConflictKind,
+}
+
+fn classify_conflict(stock_path: &str) -> ConflictKind {
+    let file = stock_path.rsplit('/').next().unwrap_or(stock_path);
+    if file.starts_with("weapon_") {
+        ConflictKind::WeaponScript
+    } else {
+        ConflictKind::StockScript
+    }
+}
+
+fn read_vpk_tree_paths(bytes: &[u8], source: &str) -> Result<Vec<String>, Error> {
+    // Tolerant listing: stock game archives use multi-archive/preload
+    // entries. Only paths are needed for scans; no data is read.
+    l4d2api_pack::read_tree_paths(bytes)
+        .map_err(|error| Error::Manifest(format!("{source}: invalid vpk ({error})")))
+}
+
+/// All stock logical paths from every `*_dir.vpk` under `left4dead2/`.
+pub fn stock_paths(game_dir: &Path) -> Result<BTreeSet<String>, Error> {
+    let left4dead2 = game_dir.join("left4dead2");
+    let mut entries = Vec::new();
+    let mut dirs: Vec<PathBuf> = fs::read_dir(&left4dead2)
+        .map_err(|_| Error::NotAGameDir(game_dir.display().to_string()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.ends_with("_dir.vpk"))
+        })
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        let bytes = fs::read(&dir)?;
+        entries.extend(read_vpk_tree_paths(&bytes, &dir.to_string_lossy())?);
+    }
+    Ok(entries.into_iter().collect())
+}
+
+fn addon_vpks(game_dir: &Path) -> Result<Vec<(String, PathBuf)>, Error> {
+    let mut found = Vec::new();
+    for sub in ["left4dead2/addons", "left4dead2/addons/workshop"] {
+        let Ok(read_dir) = fs::read_dir(game_dir.join(sub)) else {
+            continue;
+        };
+        let mut paths: Vec<PathBuf> = read_dir
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.ends_with(".vpk"))
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let rel = path
+                .strip_prefix(game_dir)
+                .map_err(|_| Error::PathEscape(path.display().to_string()))?
+                .to_string_lossy()
+                .replace('\\', "/");
+            found.push((rel, path));
+        }
+    }
+    found.sort();
+    found.dedup();
+    Ok(found)
+}
+
+/// Detects installed addons overriding stock consistency-critical files.
+/// Deterministic: sorted by `(addon, stock path)`. Skins/sounds/models are
+/// never flagged — only `scripts/*.txt` overrides kick clients.
+pub fn scan_addon_conflicts(game_dir: &Path) -> Result<Vec<AddonConflict>, Error> {
+    let stock = stock_paths(game_dir)?;
+    let mut conflicts = Vec::new();
+    for (rel, path) in addon_vpks(game_dir)? {
+        let bytes = fs::read(&path)?;
+        let tree = match read_vpk_tree_paths(&bytes, &rel) {
+            Ok(tree) => tree,
+            // An unreadable addon is the game's problem, not a conflict.
+            Err(_) => continue,
+        };
+        for entry_path in tree {
+            if is_consistency_critical(&entry_path) && stock.contains(&entry_path) {
+                conflicts.push(AddonConflict {
+                    addon_rel: rel.clone(),
+                    stock_path: entry_path.clone(),
+                    kind: classify_conflict(&entry_path),
+                });
+            }
+        }
+    }
+    conflicts.sort_by(|a, b| (&a.addon_rel, &a.stock_path).cmp(&(&b.addon_rel, &b.stock_path)));
+    conflicts.dedup();
+    Ok(conflicts)
+}
+
+fn quarantine_backup_name(addon_rel: &str) -> String {
+    addon_rel.replace(['/', '\\'], "!")
+}
+
+/// Moves a conflicting addon out of the game load path into the owned
+/// quarantine dir. Only files under `left4dead2/addons/` are eligible;
+/// anything else is refused. Reversible via [`restore_quarantined`].
+pub fn quarantine_addon(game_dir: &Path, addon_rel: &str) -> Result<String, Error> {
+    if !(addon_rel.starts_with("left4dead2/addons/") && addon_rel.ends_with(".vpk")) {
+        return Err(Error::PathEscape(addon_rel.to_owned()));
+    }
+    let source = join_owned(game_dir, addon_rel)?;
+    if !source.is_file() {
+        return Err(Error::Manifest(format!("not installed: {addon_rel}")));
+    }
+    let backup = quarantine_backup_name(addon_rel);
+    let target = join_owned(game_dir, &format!("{QUARANTINE_DIR}/{backup}"))?;
+    fs::create_dir_all(game_dir.join(QUARANTINE_DIR))?;
+    fs::rename(&source, &target)?;
+
+    let manifest_path = game_dir.join(QUARANTINE_MANIFEST);
+    let mut lines: Vec<String> = fs::read_to_string(&manifest_path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_owned)
+        .filter(|line| !line.is_empty() && line != "version 1")
+        .collect();
+    let record = format!("{backup}  {addon_rel}");
+    if !lines.contains(&record) {
+        lines.push(record);
+    }
+    let mut manifest = String::from("version 1\n");
+    for line in lines {
+        manifest.push_str(&line);
+        manifest.push('\n');
+    }
+    fs::write(&manifest_path, manifest)?;
+    Ok(backup)
+}
+
+fn read_quarantine_manifest(game_dir: &Path) -> Result<Vec<(String, String)>, Error> {
+    let text = match fs::read_to_string(game_dir.join(QUARANTINE_MANIFEST)) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(Error::Io(error)),
+    };
+    let mut records = Vec::new();
+    for line in text.lines().filter(|line| !line.is_empty()) {
+        if line == "version 1" {
+            continue;
+        }
+        let (backup, original) = line
+            .split_once("  ")
+            .ok_or_else(|| Error::Manifest(format!("bad quarantine line: {line}")))?;
+        if join_owned(Path::new("."), original).is_err() || backup.contains(['/', '\\']) {
+            return Err(Error::Manifest(format!("unsafe quarantine entry: {line}")));
+        }
+        records.push((backup.to_owned(), original.to_owned()));
+    }
+    Ok(records)
+}
+
+/// Currently quarantined addons as `(backup, original_rel)` records.
+pub fn quarantined_addons(game_dir: &Path) -> Result<Vec<(String, String)>, Error> {
+    read_quarantine_manifest(game_dir)
+}
+
+/// Restores every quarantined addon to its original path. Entries whose
+/// backup went missing are dropped (already restored by hand). Removes the
+/// manifest when empty. Returns the restored original rel paths.
+pub fn restore_quarantined(game_dir: &Path) -> Result<Vec<String>, Error> {
+    let mut restored = Vec::new();
+    for (backup, original) in read_quarantine_manifest(game_dir)? {
+        let from = join_owned(game_dir, &format!("{QUARANTINE_DIR}/{backup}"))?;
+        if !from.is_file() {
+            continue;
+        }
+        let to = join_owned(game_dir, &original)?;
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(&from, &to)?;
+        restored.push(original);
+    }
+    let remaining = read_quarantine_manifest(game_dir)?
+        .into_iter()
+        .filter(|(_, original)| !restored.contains(original))
+        .collect::<Vec<_>>();
+    if remaining.is_empty() {
+        let _ = fs::remove_file(game_dir.join(QUARANTINE_MANIFEST));
+        let quarantine = game_dir.join(QUARANTINE_DIR);
+        if quarantine.is_dir()
+            && fs::read_dir(&quarantine)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(false)
+        {
+            let _ = fs::remove_dir(&quarantine);
+        }
+    } else {
+        let mut manifest = String::from("version 1\n");
+        for (backup, original) in &remaining {
+            manifest.push_str(&format!("{backup}  {original}\n"));
+        }
+        fs::write(game_dir.join(QUARANTINE_MANIFEST), manifest)?;
+    }
+    Ok(restored)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +761,148 @@ mod tests {
         install(&game, b"vpk", "0.1.0").unwrap();
         assert!(verify(&game).unwrap().is_empty());
         let _ = fs::remove_dir_all(&game);
+    }
+
+    fn write_stock_pack(left4dead2: &Path) {
+        // Minimal stock tree: consistency-critical scripts plus a non-script
+        // stock file a benign mod may legitimately override. (The packer
+        // only allows the archive's own text types, which is exactly the
+        // policy boundary under test: only scripts/*.txt counts.)
+        let files = vec![
+            l4d2api_pack::ArchiveFile {
+                path: "scripts/weapon_rifle_sg552.txt".into(),
+                data: b"stock sg552".to_vec(),
+            },
+            l4d2api_pack::ArchiveFile {
+                path: "scripts/weapon_rifle_ak47.txt".into(),
+                data: b"stock ak47".to_vec(),
+            },
+            l4d2api_pack::ArchiveFile {
+                path: "sound/weapons/custom.txt".into(),
+                data: b"stock sound script".to_vec(),
+            },
+            l4d2api_pack::ArchiveFile {
+                path: "scripts/hud/damagecutout.txt".into(),
+                data: b"stock hud".to_vec(),
+            },
+        ];
+        let bytes = l4d2api_pack::build_vpk(&files).unwrap();
+        fs::write(left4dead2.join("pak01_dir.vpk"), bytes).unwrap();
+    }
+
+    fn write_addon(path: &Path, files: Vec<l4d2api_pack::ArchiveFile>) {
+        let bytes = l4d2api_pack::build_vpk(&files).unwrap();
+        fs::write(path, bytes).unwrap();
+    }
+
+    fn conflict_game_dir(name: &str) -> PathBuf {
+        let game = test_game_dir(name);
+        let left4dead2 = game.join("left4dead2");
+        write_stock_pack(&left4dead2);
+        fs::create_dir_all(left4dead2.join("addons/workshop")).unwrap();
+        // Script-overriding addon (the measured SG552 case) plus a
+        // suspicious-but-unmeasured HUD script override.
+        write_addon(
+            &left4dead2.join("addons/workshop/script-override-mod.vpk"),
+            vec![
+                l4d2api_pack::ArchiveFile {
+                    path: "scripts/weapon_rifle_sg552.txt".into(),
+                    data: b"modded sg552".to_vec(),
+                },
+                l4d2api_pack::ArchiveFile {
+                    path: "scripts/hud/damagecutout.txt".into(),
+                    data: b"modded hud".to_vec(),
+                },
+            ],
+        );
+        // Benign sound-only addon: must never be flagged.
+        write_addon(
+            &left4dead2.join("addons/cool-skin.vpk"),
+            vec![l4d2api_pack::ArchiveFile {
+                path: "sound/weapons/custom.txt".into(),
+                data: b"custom sound script".to_vec(),
+            }],
+        );
+        game
+    }
+
+    #[test]
+    fn detects_only_script_overrides() {
+        let game = conflict_game_dir("conflicts");
+        let conflicts = scan_addon_conflicts(&game).unwrap();
+        assert_eq!(
+            conflicts,
+            vec![
+                AddonConflict {
+                    addon_rel: "left4dead2/addons/workshop/script-override-mod.vpk".into(),
+                    stock_path: "scripts/hud/damagecutout.txt".into(),
+                    kind: ConflictKind::StockScript,
+                },
+                AddonConflict {
+                    addon_rel: "left4dead2/addons/workshop/script-override-mod.vpk".into(),
+                    stock_path: "scripts/weapon_rifle_sg552.txt".into(),
+                    kind: ConflictKind::WeaponScript,
+                },
+            ]
+        );
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn quarantine_restore_roundtrip() {
+        let game = conflict_game_dir("quarantine");
+        let addon = "left4dead2/addons/workshop/script-override-mod.vpk";
+        let before = fs::read(game.join(addon)).unwrap();
+
+        quarantine_addon(&game, addon).unwrap();
+        assert!(!game.join(addon).exists());
+        // Skin mod untouched; conflict gone from scan.
+        assert!(game.join("left4dead2/addons/cool-skin.vpk").is_file());
+        assert!(scan_addon_conflicts(&game).unwrap().is_empty());
+        assert_eq!(quarantined_addons(&game).unwrap().len(), 1);
+
+        let restored = restore_quarantined(&game).unwrap();
+        assert_eq!(restored, vec![addon.to_owned()]);
+        assert_eq!(fs::read(game.join(addon)).unwrap(), before);
+        assert!(quarantined_addons(&game).unwrap().is_empty());
+        assert_eq!(scan_addon_conflicts(&game).unwrap().len(), 2);
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    #[test]
+    fn quarantine_refuses_out_of_scope_paths() {
+        let game = conflict_game_dir("qscope");
+        assert!(quarantine_addon(&game, "left4dead2/cfg/server.cfg").is_err());
+        assert!(quarantine_addon(&game, "left4dead2/addons/../../evil.vpk").is_err());
+        assert!(quarantine_addon(&game, "left4dead2/addons/missing.vpk").is_err());
+        let _ = fs::remove_dir_all(&game);
+    }
+
+    /// Real-world shape check: every reported conflict must name a stock
+    /// path present in the game VPKs (self-consistency, no hardcoded ids).
+    /// Requires a local Steam L4D2 install; ignored in CI.
+    #[test]
+    #[ignore = "requires a local Steam L4D2 install"]
+    fn conflicts_reference_real_stock_paths() {
+        let home = std::env::var("HOME").expect("HOME must be set");
+        let game = PathBuf::from(home).join(".local/share/Steam/steamapps/common/Left 4 Dead 2");
+        let stock = stock_paths(&game).expect("game VPKs must parse");
+        assert!(!stock.is_empty());
+        let conflicts = scan_addon_conflicts(&game).expect("scan must run");
+        eprintln!("real install: {} stock paths", stock.len());
+        for conflict in conflicts.iter().take(10) {
+            eprintln!(
+                "real conflict: {} overrides {}",
+                conflict.addon_rel, conflict.stock_path
+            );
+        }
+        for conflict in &conflicts {
+            assert!(
+                stock.contains(&conflict.stock_path),
+                "conflict {:?} names a non-stock path",
+                conflict
+            );
+            assert!(conflict.addon_rel.starts_with("left4dead2/addons/"));
+        }
     }
 }

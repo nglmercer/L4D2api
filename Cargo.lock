@@ -68,6 +68,7 @@ dependencies = [
 name = "l4d2api-installer"
 version = "0.1.0"
 dependencies = [
+ "l4d2api-pack",
  "sha2",
  "thiserror",
 ]

@@ -2,6 +2,8 @@
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `Server is enforcing consistency for this file: scripts/...` + kick | Workshop mod overrides a stock script | Own server: `sv_consistency 0`. Others' server: `scan_addon_conflicts` + quarantine the listed addon, restore after |
+|---|---|---|
 | `addon missing` | `.vpk` not installed / wrong `addons/` dir | Re-run Install; check Steam library path |
 | `game closed` | L4D2 not running | Launch via Steam first |
 | `game menu` | No active campaign | Create a local/listen-hosted campaign |

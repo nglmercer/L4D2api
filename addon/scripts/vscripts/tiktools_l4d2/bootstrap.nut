@@ -19,6 +19,7 @@
     SEEN_IDS = [],
     MAX_SEQ = -1,
     OWNED = [],
+    LOOP_ENT = null,
     CAPS = "test_connection,spawn_common,spawn_item,spawn_weapon",
 };
 
@@ -66,6 +67,35 @@ function TikTools_NewGeneration() {
 // per-frame disk access.
 function OnGameEvent_round_start(params) {
     TikTools_NewGeneration();
+    TikTools_StartLoop();
+}
+
+// File I/O needs the EMS framework; without it these globals do not exist.
+function TikTools_EmsAvailable() {
+    local root = getroottable();
+    return ("FileToString" in root) && ("StringToFile" in root);
+}
+
+// Drive the poll loop from a think entity instead of relying on Update(),
+// whose invocation in campaign play is unverified. The entity dies on map
+// change, so it is recreated whenever it is missing or invalid.
+function TikTools_StartLoop() {
+    if (!TikTools_EmsAvailable()) {
+        printl("[TikTools] EMS no instalado: FileToString/StringToFile no existen.");
+        return;
+    }
+    local ent = ::TikTools.LOOP_ENT;
+    if (ent != null && ent.IsValid())
+        return;
+    ent = SpawnEntityFromTable("info_target", { targetname = "tiktools_loop" });
+    ::TikTools.LOOP_ENT = ent;
+    AddThinkToEnt(ent, "TikTools_ThinkTick");
+    printl("[TikTools] loop iniciado, addon " + ::TikTools.VERSION);
+}
+
+function TikTools_ThinkTick() {
+    TikTools_Think();
+    return ::TikTools.POLL_INTERVAL;
 }
 
 function TikTools_Think() {
@@ -83,5 +113,5 @@ function TikTools_Think() {
 // The host polls this from the director think path once wired; until the
 // live gate proves the hook, this file documents intent, not behavior.
 function Update() {
-    TikTools_Think();
+    TikTools_StartLoop();
 }

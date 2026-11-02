@@ -36,6 +36,9 @@ DEFAULT_HEARTBEAT_TIMEOUT = 5.0
 DEFAULT_LOCK_STALE_AFTER = 30.0
 # Total budget for retrying a rename blocked by a reader (Windows only).
 _RENAME_RETRY_BUDGET_S = 2.0
+# Re-reads of a heartbeat caught mid-write by the game (~100 ms total).
+_TORN_READ_ATTEMPTS = 5
+_TORN_READ_DELAY_S = 0.02
 
 _HEALTH_ORDER = ("disconnected", "connected", "stale", "not_ready", "gameplay_ready")
 
@@ -103,13 +106,19 @@ class L4D2Client:
             return None
 
     def heartbeat(self) -> Heartbeat | None:
-        raw = self._read(HEARTBEAT_FILE)
-        if raw is None:
-            return None
-        try:
-            return protocol.decode_heartbeat(raw)
-        except Exception:
-            return None
+        # The game rewrites heartbeat.txt every ~0.35 s, so a read can catch
+        # it mid-write. Re-read a torn snapshot briefly (reads only; nothing
+        # is re-sent) before reporting no heartbeat.
+        for attempt in range(_TORN_READ_ATTEMPTS):
+            raw = self._read(HEARTBEAT_FILE)
+            if raw is None:
+                return None
+            try:
+                return protocol.decode_heartbeat(raw)
+            except Exception:
+                if attempt + 1 < _TORN_READ_ATTEMPTS:
+                    time.sleep(_TORN_READ_DELAY_S)
+        return None
 
     def heartbeat_fresh(self) -> tuple[Heartbeat, float] | None:
         hb = self.heartbeat()

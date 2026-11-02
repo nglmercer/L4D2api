@@ -41,6 +41,9 @@ export const DEFAULT_LOCK_STALE_AFTER_MS = 30000;
 /** Total time budget for retrying a rename blocked by a reader (Windows). */
 export const RENAME_RETRY_BUDGET_MS = 2000;
 export const RENAME_RETRY_STEP_MS = 10;
+/** Re-reads of a heartbeat caught mid-write by the game (~100 ms total). */
+const TORN_READ_ATTEMPTS = 5;
+const TORN_READ_DELAY_MS = 20;
 
 const sleepSync = (ms: number): Promise<void> => sleep(ms);
 
@@ -105,13 +108,19 @@ export class L4D2Client {
   }
 
   async heartbeat(): Promise<Heartbeat | null> {
-    const raw = await this.readFile(HEARTBEAT_FILE);
-    if (raw === null) return null;
-    try {
-      return decodeHeartbeat(raw);
-    } catch {
-      return null;
+    // The game rewrites heartbeat.txt every ~0.35 s, so a read can catch it
+    // mid-write. Re-read a torn snapshot briefly (reads only; nothing is
+    // re-sent) before reporting no heartbeat.
+    for (let attempt = 0; attempt < TORN_READ_ATTEMPTS; attempt++) {
+      const raw = await this.readFile(HEARTBEAT_FILE);
+      if (raw === null) return null;
+      try {
+        return decodeHeartbeat(raw);
+      } catch {
+        if (attempt + 1 < TORN_READ_ATTEMPTS) await sleepSync(TORN_READ_DELAY_MS);
+      }
     }
+    return null;
   }
 
   async heartbeatFresh(): Promise<{ heartbeat: Heartbeat; ageMs: number } | null> {

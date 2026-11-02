@@ -31,6 +31,9 @@ pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 pub const DEFAULT_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
 /// Total budget for retrying a rename blocked by a reader (Windows).
 const RENAME_RETRY_BUDGET: Duration = Duration::from_secs(2);
+/// Re-reads of a heartbeat caught mid-write by the game (~100 ms total).
+const TORN_READ_ATTEMPTS: u32 = 5;
+const TORN_READ_DELAY: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -207,13 +210,21 @@ impl Client {
 
     /// Read and validate the current heartbeat, if any.
     pub fn heartbeat(&self) -> Result<Option<proto::Heartbeat>, Error> {
-        match self.read_record(HEARTBEAT_FILE)? {
-            None => Ok(None),
-            Some(text) => match proto::decode_heartbeat(&text) {
-                Ok(heartbeat) => Ok(Some(heartbeat)),
-                Err(_) => Ok(None),
-            },
+        // The game rewrites heartbeat.txt every ~0.35 s, so a read can catch
+        // it mid-write. Re-read a torn snapshot briefly (reads only; nothing
+        // is re-sent) before reporting no heartbeat.
+        for attempt in 0..TORN_READ_ATTEMPTS {
+            let Some(text) = self.read_record(HEARTBEAT_FILE)? else {
+                return Ok(None);
+            };
+            if let Ok(heartbeat) = proto::decode_heartbeat(&text) {
+                return Ok(Some(heartbeat));
+            }
+            if attempt + 1 < TORN_READ_ATTEMPTS {
+                std::thread::sleep(TORN_READ_DELAY);
+            }
         }
+        Ok(None)
     }
 
     /// Read the heartbeat plus its file age. `None` when no valid heartbeat

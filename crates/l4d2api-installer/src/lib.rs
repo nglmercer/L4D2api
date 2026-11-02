@@ -11,7 +11,8 @@
 //!
 //! - Game VScript sandbox (read/written by the game at runtime):
 //!   `left4dead2/ems/tiktools_l4d2/` — `command.txt`, `result.txt`,
-//!   `heartbeat.txt`, `generation.txt`.
+//!   `heartbeat.txt`, `generation.txt`, and the user-editable `config.txt`
+//!   (never removed: uninstall only deletes the directory when empty).
 //! - Installer-owned metadata (same directory, installer-managed):
 //!   `left4dead2/ems/tiktools_l4d2/installed.manifest`,
 //!   `quarantine.manifest`, `quarantine/`, plus the crash-recovery

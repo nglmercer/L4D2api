@@ -32,6 +32,28 @@ left intact. Upgrades are transactional: the new payload is staged and
 verified first; the old payload is removed only after the new manifest is
 in place; a crash mid-upgrade is finished or rolled back on the next run.
 
+## Configuring cooldowns (hot reload)
+
+On the first round after install, the addon creates
+`left4dead2/ems/tiktools_l4d2/config.txt`:
+
+```text
+item_cooldown=0
+weapon_cooldown=0
+common_cooldown=0
+special_cooldown=30
+tank_cooldown=120
+round_cap=60
+```
+
+Cooldowns are seconds between spawns of that kind (`0` = none, max `600`).
+`round_cap` (1-1000) is the total entities this integration may spawn per
+round. Edit and save the file while the game is running: the addon re-reads
+it about once per second and prints `[TikTools] config cargada: ...` to the
+console when the new values apply. A missing or out-of-range key falls back
+to its default (and logs `valor invalido`). The file survives upgrades and
+uninstall. Refusals still arrive as `COOLDOWN` / `ENTITY_CAP` results.
+
 ## Checking installation status
 
 ```powershell

@@ -65,6 +65,7 @@ function TikTools_NewGeneration() {
     TikTools_ResetReplay();
     TikTools_ResetRoundCounters();
     TikTools_ResetOwned();
+    TikTools_ReloadConfig(true);
     TikTools_WriteHeartbeat();
 }
 
@@ -130,6 +131,7 @@ function TikTools_Think() {
     ::TikTools.LAST_POLL = now;
     ::TikTools.TICK++;
     TikTools_WriteHeartbeat();
+    TikTools_ReloadConfig(false);
     TikTools_PollCommand();
 }
 

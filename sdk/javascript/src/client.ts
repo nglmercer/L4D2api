@@ -38,6 +38,9 @@ export const LOCK_FILE = "command.lock";
 
 export const DEFAULT_HEARTBEAT_TIMEOUT_MS = 5000;
 export const DEFAULT_LOCK_STALE_AFTER_MS = 30000;
+/** Total time budget for retrying a rename blocked by a reader (Windows). */
+export const RENAME_RETRY_BUDGET_MS = 2000;
+export const RENAME_RETRY_STEP_MS = 10;
 
 const sleepSync = (ms: number): Promise<void> => sleep(ms);
 
@@ -239,21 +242,22 @@ export class L4D2Client {
       throw new TransportError(String(error));
     }
     // fs.rename atomically replaces the destination on both POSIX and
-    // Windows; bounded retries cover only transient sharing violations.
-    let attempts = 0;
+    // Windows. On Windows the rename fails with EPERM while another process
+    // has command.txt open (the game polls it), so retry transient lock
+    // errors within a time budget rather than a fixed attempt count.
+    const deadline = Date.now() + RENAME_RETRY_BUDGET_MS;
     for (;;) {
       try {
         await fs.rename(tmp, target);
         return;
       } catch (error: unknown) {
-        attempts += 1;
         const code = (error as NodeJS.ErrnoException).code;
         const retryable = code === "EPERM" || code === "EBUSY" || code === "EINTR" || code === "EACCES";
-        if (!retryable || attempts >= 20) {
+        if (!retryable || Date.now() >= deadline) {
           await fs.rm(tmp, { force: true });
           throw new TransportError(String(error));
         }
-        await sleepSync(25);
+        await new Promise((resolve) => setTimeout(resolve, RENAME_RETRY_STEP_MS));
       }
     }
   }

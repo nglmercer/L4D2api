@@ -34,8 +34,17 @@ LOCK_FILE = "command.lock"
 
 DEFAULT_HEARTBEAT_TIMEOUT = 5.0
 DEFAULT_LOCK_STALE_AFTER = 30.0
+# Total budget for retrying a rename blocked by a reader (Windows only).
+_RENAME_RETRY_BUDGET_S = 2.0
 
 _HEALTH_ORDER = ("disconnected", "connected", "stale", "not_ready", "gameplay_ready")
+
+
+def _remove_quietly(path: Path) -> None:
+    try:
+        path.unlink()
+    except OSError:
+        pass
 
 
 class L4D2Client:
@@ -229,15 +238,22 @@ class L4D2Client:
                 pass
             raise TransportError(str(exc)) from exc
         # os.replace is atomic on both POSIX and Windows, including when
-        # the destination already exists.
-        try:
-            os.replace(tmp, target)
-        except OSError as exc:
+        # the destination already exists. On Windows it fails with
+        # PermissionError while the game holds command.txt open; retry that
+        # within a time budget, never anything else.
+        deadline = time.monotonic() + _RENAME_RETRY_BUDGET_S
+        while True:
             try:
-                tmp.unlink()
-            except OSError:
-                pass
-            raise TransportError(str(exc)) from exc
+                os.replace(tmp, target)
+                return
+            except PermissionError as exc:
+                if time.monotonic() >= deadline:
+                    _remove_quietly(tmp)
+                    raise TransportError(str(exc)) from exc
+                time.sleep(0.01)
+            except OSError as exc:
+                _remove_quietly(tmp)
+                raise TransportError(str(exc)) from exc
 
     # -- requests ----------------------------------------------------------------
     def next_id(self) -> str:

@@ -29,6 +29,8 @@ pub const LOCK_FILE: &str = "command.lock";
 pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default: a lock untouched for this long may be reclaimed.
 pub const DEFAULT_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
+/// Total budget for retrying a rename blocked by a reader (Windows).
+const RENAME_RETRY_BUDGET: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -427,24 +429,24 @@ impl Client {
             let _ = fs::remove_file(&tmp);
             return Err(Error::Io(error));
         }
-        let mut attempts = 0;
+        // Windows fails the rename with access-denied while the game holds
+        // command.txt open. Retry transient lock errors within a time budget.
+        let deadline = std::time::Instant::now() + RENAME_RETRY_BUDGET;
         loop {
             match fs::rename(&tmp, &target) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    attempts += 1;
-                    // Retry only transient sharing/lock errors, bounded.
                     let retryable = matches!(
                         error.kind(),
                         io::ErrorKind::PermissionDenied
                             | io::ErrorKind::WouldBlock
                             | io::ErrorKind::Interrupted
                     );
-                    if !retryable || attempts >= 20 {
+                    if !retryable || std::time::Instant::now() >= deadline {
                         let _ = fs::remove_file(&tmp);
                         return Err(Error::Io(error));
                     }
-                    std::thread::sleep(Duration::from_millis(25));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         }
@@ -758,9 +760,24 @@ mod peer {
         .unwrap();
         let peer_dir = dir.clone();
         let peer = std::thread::spawn(move || {
+            // Like the game: answer only the command that was actually written,
+            // using its own sequence number. A reply to a command that was never
+            // sent would race the client's sequence recovery in send_locked.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let command = loop {
+                if let Ok(text) = fs::read_to_string(peer_dir.join(COMMAND_FILE)) {
+                    if let Ok(command) = proto::decode_command(&text) {
+                        if command.id == "r_new" {
+                            break command;
+                        }
+                    }
+                }
+                assert!(Instant::now() < deadline, "peer saw no command");
+                std::thread::sleep(Duration::from_millis(5));
+            };
             std::thread::sleep(Duration::from_millis(50));
             let reply = proto::encode_result(&proto::ResultRecord {
-                seq: 3,
+                seq: command.seq,
                 id: "r_new".into(),
                 generation: "g-1".into(),
                 status: proto::Status::Rejected,

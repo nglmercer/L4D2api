@@ -76,9 +76,11 @@ function TikTools_EmsAvailable() {
     return ("FileToString" in root) && ("StringToFile" in root);
 }
 
-// Drive the poll loop from a think entity instead of relying on Update(),
-// whose invocation in campaign play is unverified. The entity dies on map
-// change, so it is recreated whenever it is missing or invalid.
+// Drive the poll loop from a logic_timer whose OnTimer output calls back
+// into script every POLL_INTERVAL seconds. The earlier AddThinkToEnt on an
+// info_target never fired in live play (heartbeat stuck at tick=0), so the
+// timer entity is used instead. The entity dies on map change, so it is
+// recreated whenever it is missing or invalid.
 function TikTools_StartLoop() {
     if (!TikTools_EmsAvailable()) {
         printl("[TikTools] EMS no instalado: FileToString/StringToFile no existen.");
@@ -87,15 +89,24 @@ function TikTools_StartLoop() {
     local ent = ::TikTools.LOOP_ENT;
     if (ent != null && ent.IsValid())
         return;
-    ent = SpawnEntityFromTable("info_target", { targetname = "tiktools_loop" });
+    // Entities.CreateByClassname does not exist in this VScript runtime;
+    // SpawnEntityFromTable is the creation path this addon already uses.
+    ent = SpawnEntityFromTable("logic_timer", {
+        targetname = "tiktools_loop",
+        RefireTime = ::TikTools.POLL_INTERVAL.tostring(),
+    });
+    if (ent == null) {
+        printl("[TikTools] no se pudo crear logic_timer; loop no iniciado.");
+        return;
+    }
+    ent.ConnectOutput("OnTimer", "TikTools_OnTimer");
     ::TikTools.LOOP_ENT = ent;
-    AddThinkToEnt(ent, "TikTools_ThinkTick");
-    printl("[TikTools] loop iniciado, addon " + ::TikTools.VERSION);
+    EntFireByHandle(ent, "Enable", "", 0.0, null, null);
+    printl("[TikTools] loop iniciado (logic_timer), addon " + ::TikTools.VERSION);
 }
 
-function TikTools_ThinkTick() {
+function TikTools_OnTimer() {
     TikTools_Think();
-    return ::TikTools.POLL_INTERVAL;
 }
 
 function TikTools_Think() {

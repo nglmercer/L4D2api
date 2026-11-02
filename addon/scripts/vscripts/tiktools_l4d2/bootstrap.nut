@@ -1,7 +1,7 @@
 // bootstrap.nut -- addon startup, session generation, heartbeat loop.
 //
 // Engine behavior here is verified in a Windows Steam local campaign (see
-// docs/WINDOWS_TESTING.md); map transitions are not yet recorded. Fail
+// docs/WINDOWS_TESTING.md), including a changelevel map transition. Fail
 // closed: no host authority or no round means no mutations, only
 // heartbeat/status reads.
 

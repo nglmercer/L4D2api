@@ -28,8 +28,10 @@ Transport is files, not HTTP: the SDKs and the game exchange
 - **Config with hot reload**: per-action cooldowns, `round_cap` and
   `damage_max` in `ems/tiktools_l4d2/config.txt`, applied in about a second.
 
-Evidence, builds and what is still untested (map transitions, a second
-human player, long bursts): [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
+A `changelevel` map transition was also checked live: the loop restarts
+under a new generation and old commands never run again. Evidence, builds
+and what is still untested (a second human player, long bursts):
+[docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
 
 ## Quick installation (Windows 10/11, Steam L4D2)
 

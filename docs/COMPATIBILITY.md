@@ -36,9 +36,10 @@ design), `blocked` (cannot work by construction).
 
 `verified` means the action returned the expected result in the recorded
 single-player local-host run in [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
-(Windows 11, L4D2 build 10097, `sv_cheats 0`). It does not yet cover map
-transitions, a second human player or long bursts; those rows in the test
-plan are still open. Capabilities are probed in-game, and SDKs only
+(Windows 11, L4D2 build 10097, `sv_cheats 0`), which also covered a
+`changelevel` map transition (new generation, no replay of old commands).
+It does not yet cover a second human player or long bursts; those rows in
+the test plan are still open. Capabilities are probed in-game, and SDKs only
 advertise what the live heartbeat lists.
 
 ## Workshop mods and consistency kicks

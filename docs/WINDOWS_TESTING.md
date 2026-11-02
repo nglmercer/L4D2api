@@ -1,8 +1,8 @@
 # Windows testing gate
 
 Status: **one recorded Windows run (2026-11-01), below.** It covers every
-action in a single-player local-host session. Map transitions, a second
-human player and long bursts are still unrecorded. Do not mark any
+action in a single-player local-host session, plus a `changelevel` map
+transition. A second human player and long bursts are still unrecorded. Do not mark any
 capability `verified` without a row here. Never fabricate Windows results.
 
 ## Recorded run: 2026-11-01
@@ -43,6 +43,18 @@ Addon builds (packing is deterministic, so each SHA-256 maps to a commit):
 | Cooldown refusal | refused within cooldown | `rejected COOLDOWN` (items/weapons at 5 s; later `item_cooldown=10` via hot reload) |
 | Config hot reload | new values within ~1 s, no restart | console `[TikTools] config cargada: item=10 ...`, next item refused |
 
+Map transition (build `bcdad006`): `changelevel c1m1_hotel -> c1m2_streets`
+during a ready round, with a completed `spawn_item` marker (`g-11`) left
+in `command.txt`.
+- The addon reloaded and the loop restarted; the heartbeat moved to `g-12`
+  on `c1m2_streets` and reached `ready=1`.
+- `result.txt` still held the marker's original `g-11` result: the old
+  command was not executed again under the new generation.
+- An SDK client still pinned to `g-11` was refused before writing
+  (`StaleGenerationError ... handshake again`).
+- After a fresh `connect()`, `spawn_weapon` and `spawn_item` returned
+  `applied` under `g-12`. No addon errors in the console.
+
 Restart behavior: the game was relaunched about ten times. Every launch
 started a new generation (`g-1` to `g-9`), and the SDK connected to the new
 one each time. No stale command ran. A deliberate stale-command replay
@@ -60,9 +72,10 @@ Findings fixed during the run (all in this repo's history):
 - The poll timer logged `SCRIPT PERF WARNING` at 3-10 ms per run. A build
   that writes the heartbeat once per second is pending a live check.
 
-Not covered by this run: repeated invocation of the same request id,
-map transition, a second human player, prolonged bursts with FPS notes,
-Windows 10, and a secondary Steam library.
+Not covered by this run: repeated invocation of the same request id, a
+transition by finishing a chapter (only `changelevel` was used), a second
+human player, prolonged bursts with FPS notes, Windows 10, and a secondary
+Steam library.
 
 ## Earlier user report
 
@@ -81,7 +94,8 @@ until the fixes listed above.
       `heartbeat.txt`, `generation.txt`, `config.txt`). Records may carry a
       trailing NUL, which the SDKs strip. 1 KiB limit and file-lock
       behavior beyond the rename retry are not separately measured.
-- [ ] Poll loop persists across map transitions: not yet tested. Cadence is
+- [x] Poll loop comes back after a map transition (`changelevel` to
+      `c1m2_streets`: new generation, `ready=1`, no replay). Cadence is
       0.35 s via a `logic_timer`; per-run cost measured at 3-10 ms
       (`SCRIPT PERF WARNING`), FPS impact not measured.
 - [x] `test_connection` round-trips, then item, weapon and common spawns

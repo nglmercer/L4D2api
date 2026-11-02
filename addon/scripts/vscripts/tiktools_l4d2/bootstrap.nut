@@ -20,8 +20,14 @@
     MAX_SEQ = -1,
     OWNED = [],
     LOOP_ENT = null,
+    SCOPE = null,
     CAPS = "test_connection,spawn_common,spawn_item,spawn_weapon",
 };
+
+// The addon's functions live in the scope this file is included into (the
+// director script scope), not the root table. Entity output callbacks run in
+// the entity's own scope, so they reach the addon through this reference.
+::TikTools.SCOPE = this;
 
 IncludeScript("tiktools_l4d2/state.nut");
 IncludeScript("tiktools_l4d2/protocol.nut");
@@ -94,19 +100,25 @@ function TikTools_StartLoop() {
     ent = SpawnEntityFromTable("logic_timer", {
         targetname = "tiktools_loop",
         RefireTime = ::TikTools.POLL_INTERVAL.tostring(),
+        // Start enabled: EntFireByHandle and AcceptInput are not available
+        // in this VScript runtime, so no Enable input is sent.
+        StartDisabled = 0,
     });
     if (ent == null) {
         printl("[TikTools] no se pudo crear logic_timer; loop no iniciado.");
         return;
     }
+    // Output callbacks resolve in the entity's own script scope, not the
+    // root table, so bind the handler there before connecting it.
+    ent.ValidateScriptScope();
+    ent.GetScriptScope()["TikTools_OnTimer"] <- TikTools_OnTimer;
     ent.ConnectOutput("OnTimer", "TikTools_OnTimer");
     ::TikTools.LOOP_ENT = ent;
-    EntFireByHandle(ent, "Enable", "", 0.0, null, null);
     printl("[TikTools] loop iniciado (logic_timer), addon " + ::TikTools.VERSION);
 }
 
 function TikTools_OnTimer() {
-    TikTools_Think();
+    ::TikTools.SCOPE.TikTools_Think();
 }
 
 function TikTools_Think() {

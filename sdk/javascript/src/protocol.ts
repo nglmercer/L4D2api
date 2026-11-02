@@ -24,6 +24,7 @@ export const INFECTED_ALLOWLIST = new Set([
 ]);
 export const ITEM_ALLOWLIST = new Set([
   "first_aid_kit", "pain_pills", "adrenaline", "pipe_bomb", "molotov", "defibrillator",
+  "ammo", "upgradepack_incendiary", "upgradepack_explosive",
 ]);
 export const WEAPON_ALLOWLIST = new Set([
   "weapon_pistol", "weapon_pistol_magnum", "weapon_smg", "weapon_smg_silenced",
@@ -33,12 +34,27 @@ export const WEAPON_ALLOWLIST = new Set([
   "weapon_sniper_military", "weapon_sniper_awp", "weapon_sniper_scout",
   "weapon_grenade_launcher", "weapon_chainsaw", "weapon_melee_spawn",
 ]);
-export const CAPABILITY_ALLOWLIST = new Set([
-  "test_connection", "spawn_common", "spawn_infected", "spawn_item", "spawn_weapon",
+export const AMOUNT_MAX = 100;
+export const HAZARD_MAX = 3;
+export const TARGET_ALLOWLIST = new Set(["all", "host", "random"]);
+export const HAZARD_ALLOWLIST = new Set(["explosion", "fire"]);
+/** give_item names beyond ITEM_ALLOWLIST: weapons without `weapon_`, plus melee. */
+export const GIVE_EXTRA_ALLOWLIST = new Set([
+  "pistol", "pistol_magnum", "smg", "smg_silenced", "smg_mp5",
+  "rifle", "rifle_desert", "rifle_ak47", "rifle_sg552",
+  "shotgun_chrome", "shotgun_spas", "pumpshotgun", "autoshotgun",
+  "hunting_rifle", "sniper_military", "sniper_awp", "sniper_scout",
+  "grenade_launcher", "chainsaw",
+  "katana", "fireaxe", "crowbar", "machete", "baseball_bat",
+  "cricket_bat", "electric_guitar", "frying_pan", "golfclub",
+  "knife", "tonfa", "pitchfork", "shovel",
 ]);
+export const GIVE_ALLOWLIST = new Set([...ITEM_ALLOWLIST, ...GIVE_EXTRA_ALLOWLIST]);
 export const ACTION_NAMES = new Set([
   "test_connection", "spawn_common", "spawn_infected", "spawn_item", "spawn_weapon",
+  "heal", "temp_health", "damage", "revive", "give_item", "panic", "spawn_hazard",
 ]);
+export const CAPABILITY_ALLOWLIST = ACTION_NAMES;
 
 /** FNV-1a (32-bit), rendered as 8 lowercase hex digits. */
 export function checksum(body: string): string {
@@ -147,7 +163,17 @@ export interface DecodedCommand extends CommandInput {
 
 const COMMAND_KEYS = new Set([
   "v", "seq", "id", "gen", "action", "count", "class", "item", "weapon",
+  "target", "amount", "kind",
 ]);
+
+function target(fields: Map<string, string>): string {
+  const value = fields.get("target");
+  if (value === undefined) throw new ProtocolError("missing field `target`");
+  if (!TARGET_ALLOWLIST.has(value)) {
+    throw new ProtocolError(`unknown target \`${value}\` (all|host|random)`);
+  }
+  return value;
+}
 
 function checkActionParams(action: string, fields: Map<string, string>): Record<string, string> {
   const count = (lo: number, hi: number): number => {
@@ -191,6 +217,37 @@ function checkActionParams(action: string, fields: Map<string, string>): Record<
       }
       return { weapon, count: String(count(1, WEAPON_MAX)) };
     }
+    case "heal":
+    case "temp_health":
+    case "damage": {
+      const raw = fields.get("amount");
+      if (raw === undefined) throw new ProtocolError("missing field `amount`");
+      const amount = parseU64("amount", raw);
+      if (amount < 1 || amount > AMOUNT_MAX) {
+        throw new ProtocolError(`field \`amount\` must be 1-${AMOUNT_MAX}`);
+      }
+      return { target: target(fields), amount: String(amount) };
+    }
+    case "revive":
+      return { target: target(fields) };
+    case "give_item": {
+      const item = fields.get("item");
+      if (item === undefined) throw new ProtocolError("missing field `item`");
+      if (!GIVE_ALLOWLIST.has(item)) {
+        throw new ProtocolError(`unknown give_item item \`${item}\``);
+      }
+      return { item, target: target(fields) };
+    }
+    case "panic":
+      return {};
+    case "spawn_hazard": {
+      const kind = fields.get("kind");
+      if (kind === undefined) throw new ProtocolError("missing field `kind`");
+      if (!HAZARD_ALLOWLIST.has(kind)) {
+        throw new ProtocolError(`unknown hazard kind \`${kind}\` (explosion|fire)`);
+      }
+      return { kind, count: String(count(1, HAZARD_MAX)) };
+    }
     default:
       throw new ProtocolError(`unknown action \`${action}\``);
   }
@@ -202,6 +259,13 @@ const EXPECTED_KEYS: Record<string, Set<string>> = {
   spawn_infected: new Set(["v", "seq", "id", "gen", "action", "class", "count"]),
   spawn_item: new Set(["v", "seq", "id", "gen", "action", "item", "count"]),
   spawn_weapon: new Set(["v", "seq", "id", "gen", "action", "weapon", "count"]),
+  heal: new Set(["v", "seq", "id", "gen", "action", "target", "amount"]),
+  temp_health: new Set(["v", "seq", "id", "gen", "action", "target", "amount"]),
+  damage: new Set(["v", "seq", "id", "gen", "action", "target", "amount"]),
+  revive: new Set(["v", "seq", "id", "gen", "action", "target"]),
+  give_item: new Set(["v", "seq", "id", "gen", "action", "item", "target"]),
+  panic: new Set(["v", "seq", "id", "gen", "action"]),
+  spawn_hazard: new Set(["v", "seq", "id", "gen", "action", "kind", "count"]),
 };
 
 export function encodeCommand(command: CommandInput): string {
@@ -225,7 +289,7 @@ export function encodeCommand(command: CommandInput): string {
     `gen=${command.generation}`,
     `action=${command.action}`,
   ];
-  for (const key of ["class", "item", "weapon", "count"]) {
+  for (const key of ["class", "item", "weapon", "kind", "target", "amount", "count"]) {
     if (key in params) lines.push(`${key}=${params[key]}`);
   }
   const record = finish(lines);

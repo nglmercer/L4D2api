@@ -28,7 +28,10 @@ INFECTED_ALLOWLIST = frozenset(
     ["tank", "witch", "smoker", "boomer", "hunter", "spitter", "jockey", "charger"]
 )
 ITEM_ALLOWLIST = frozenset(
-    ["first_aid_kit", "pain_pills", "adrenaline", "pipe_bomb", "molotov", "defibrillator"]
+    [
+        "first_aid_kit", "pain_pills", "adrenaline", "pipe_bomb", "molotov", "defibrillator",
+        "ammo", "upgradepack_incendiary", "upgradepack_explosive",
+    ]
 )
 WEAPON_ALLOWLIST = frozenset(
     [
@@ -54,12 +57,31 @@ WEAPON_ALLOWLIST = frozenset(
         "weapon_melee_spawn",
     ]
 )
-CAPABILITY_ALLOWLIST = frozenset(
-    ["test_connection", "spawn_common", "spawn_infected", "spawn_item", "spawn_weapon"]
+AMOUNT_MAX = 100
+HAZARD_MAX = 3
+TARGET_ALLOWLIST = frozenset(["all", "host", "random"])
+HAZARD_ALLOWLIST = frozenset(["explosion", "fire"])
+# give_item names beyond ITEM_ALLOWLIST: weapons without `weapon_`, plus melee.
+GIVE_EXTRA_ALLOWLIST = frozenset(
+    [
+        "pistol", "pistol_magnum", "smg", "smg_silenced", "smg_mp5",
+        "rifle", "rifle_desert", "rifle_ak47", "rifle_sg552",
+        "shotgun_chrome", "shotgun_spas", "pumpshotgun", "autoshotgun",
+        "hunting_rifle", "sniper_military", "sniper_awp", "sniper_scout",
+        "grenade_launcher", "chainsaw",
+        "katana", "fireaxe", "crowbar", "machete", "baseball_bat",
+        "cricket_bat", "electric_guitar", "frying_pan", "golfclub",
+        "knife", "tonfa", "pitchfork", "shovel",
+    ]
 )
+GIVE_ALLOWLIST = ITEM_ALLOWLIST | GIVE_EXTRA_ALLOWLIST
 ACTION_NAMES = frozenset(
-    ["test_connection", "spawn_common", "spawn_infected", "spawn_item", "spawn_weapon"]
+    [
+        "test_connection", "spawn_common", "spawn_infected", "spawn_item", "spawn_weapon",
+        "heal", "temp_health", "damage", "revive", "give_item", "panic", "spawn_hazard",
+    ]
 )
+CAPABILITY_ALLOWLIST = ACTION_NAMES
 
 
 def checksum(body: str) -> str:
@@ -158,7 +180,10 @@ class Command:
         return int(self.params.get("count", "0")) if self.action != "test_connection" else 0
 
 
-_COMMAND_KEYS = frozenset(["v", "seq", "id", "gen", "action", "count", "class", "item", "weapon"])
+_COMMAND_KEYS = frozenset(
+    ["v", "seq", "id", "gen", "action", "count", "class", "item", "weapon",
+     "target", "amount", "kind"]
+)
 
 
 def _check_action(action: str, fields: dict[str, str]) -> dict[str, str]:
@@ -198,6 +223,40 @@ def _check_action(action: str, fields: dict[str, str]) -> dict[str, str]:
         if weapon not in WEAPON_ALLOWLIST:
             raise ProtocolError(f"unknown weapon `{weapon}`")
         return {"weapon": weapon, "count": str(count(1, WEAPON_MAX))}
+
+    def target() -> str:
+        value = fields.get("target")
+        if value is None:
+            raise ProtocolError("missing field `target`")
+        if value not in TARGET_ALLOWLIST:
+            raise ProtocolError(f"unknown target `{value}` (all|host|random)")
+        return value
+
+    if action in ("heal", "temp_health", "damage"):
+        if "amount" not in fields:
+            raise ProtocolError("missing field `amount`")
+        amount = _parse_u64("amount", fields["amount"])
+        if not 1 <= amount <= AMOUNT_MAX:
+            raise ProtocolError(f"field `amount` must be 1-{AMOUNT_MAX}")
+        return {"target": target(), "amount": str(amount)}
+    if action == "revive":
+        return {"target": target()}
+    if action == "give_item":
+        item = fields.get("item")
+        if item is None:
+            raise ProtocolError("missing field `item`")
+        if item not in GIVE_ALLOWLIST:
+            raise ProtocolError(f"unknown give_item item `{item}`")
+        return {"item": item, "target": target()}
+    if action == "panic":
+        return {}
+    if action == "spawn_hazard":
+        kind = fields.get("kind")
+        if kind is None:
+            raise ProtocolError("missing field `kind`")
+        if kind not in HAZARD_ALLOWLIST:
+            raise ProtocolError(f"unknown hazard kind `{kind}` (explosion|fire)")
+        return {"kind": kind, "count": str(count(1, HAZARD_MAX))}
     raise ProtocolError(f"unknown action `{action}`")
 
 
@@ -209,6 +268,13 @@ def _expected_keys(action: str) -> frozenset[str]:
         "spawn_infected": {"class", "count"},
         "spawn_item": {"item", "count"},
         "spawn_weapon": {"weapon", "count"},
+        "heal": {"target", "amount"},
+        "temp_health": {"target", "amount"},
+        "damage": {"target", "amount"},
+        "revive": {"target"},
+        "give_item": {"item", "target"},
+        "panic": set(),
+        "spawn_hazard": {"kind", "count"},
     }[action]
 
 
@@ -227,7 +293,7 @@ def encode_command(command: Command) -> str:
         f"gen={command.generation}",
         f"action={command.action}",
     ]
-    for key in ("class", "item", "weapon", "count"):
+    for key in ("class", "item", "weapon", "kind", "target", "amount", "count"):
         if key in params:
             lines.append(f"{key}={params[key]}")
     record = _finish(lines)

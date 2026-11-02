@@ -1,9 +1,9 @@
 // bootstrap.nut -- addon startup, session generation, heartbeat loop.
 //
-// PROTOTYPE (live gate BLOCKED): every engine behavior assumed here must be
-// proven in a real Windows Steam local campaign before any claim of
-// compatibility. Fail closed: no host authority or no round means no
-// mutations, only heartbeat/status reads.
+// Engine behavior here is verified in a Windows Steam local campaign (see
+// docs/WINDOWS_TESTING.md), including a changelevel map transition. Fail
+// closed: no host authority or no round means no mutations, only
+// heartbeat/status reads.
 
 ::TikTools <- {
     VERSION = "0.1.0",
@@ -20,13 +20,20 @@
     MAX_SEQ = -1,
     OWNED = [],
     LOOP_ENT = null,
+    SCOPE = null,
     CAPS = "test_connection,spawn_common,spawn_item,spawn_weapon",
 };
+
+// The addon's functions live in the scope this file is included into (the
+// director script scope), not the root table. Entity output callbacks run in
+// the entity's own scope, so they reach the addon through this reference.
+::TikTools.SCOPE = this;
 
 IncludeScript("tiktools_l4d2/state.nut");
 IncludeScript("tiktools_l4d2/protocol.nut");
 IncludeScript("tiktools_l4d2/limits.nut");
 IncludeScript("tiktools_l4d2/spawns.nut");
+IncludeScript("tiktools_l4d2/effects.nut");
 IncludeScript("tiktools_l4d2/actions.nut");
 
 // New generation per VScript startup; old commands from a previous game
@@ -59,6 +66,8 @@ function TikTools_NewGeneration() {
     TikTools_ResetReplay();
     TikTools_ResetRoundCounters();
     TikTools_ResetOwned();
+    TikTools_ReloadConfig(true);
+    TikTools_LogDirectorApi();
     TikTools_WriteHeartbeat();
 }
 
@@ -76,9 +85,11 @@ function TikTools_EmsAvailable() {
     return ("FileToString" in root) && ("StringToFile" in root);
 }
 
-// Drive the poll loop from a think entity instead of relying on Update(),
-// whose invocation in campaign play is unverified. The entity dies on map
-// change, so it is recreated whenever it is missing or invalid.
+// Drive the poll loop from a logic_timer whose OnTimer output calls back
+// into script every POLL_INTERVAL seconds. The earlier AddThinkToEnt on an
+// info_target never fired in live play (heartbeat stuck at tick=0), so the
+// timer entity is used instead. The entity dies on map change, so it is
+// recreated whenever it is missing or invalid.
 function TikTools_StartLoop() {
     if (!TikTools_EmsAvailable()) {
         printl("[TikTools] EMS no instalado: FileToString/StringToFile no existen.");
@@ -87,15 +98,30 @@ function TikTools_StartLoop() {
     local ent = ::TikTools.LOOP_ENT;
     if (ent != null && ent.IsValid())
         return;
-    ent = SpawnEntityFromTable("info_target", { targetname = "tiktools_loop" });
+    // Entities.CreateByClassname does not exist in this VScript runtime;
+    // SpawnEntityFromTable is the creation path this addon already uses.
+    ent = SpawnEntityFromTable("logic_timer", {
+        targetname = "tiktools_loop",
+        RefireTime = ::TikTools.POLL_INTERVAL.tostring(),
+        // Start enabled: EntFireByHandle and AcceptInput are not available
+        // in this VScript runtime, so no Enable input is sent.
+        StartDisabled = 0,
+    });
+    if (ent == null) {
+        printl("[TikTools] no se pudo crear logic_timer; loop no iniciado.");
+        return;
+    }
+    // Output callbacks resolve in the entity's own script scope, not the
+    // root table, so bind the handler there before connecting it.
+    ent.ValidateScriptScope();
+    ent.GetScriptScope()["TikTools_OnTimer"] <- TikTools_OnTimer;
+    ent.ConnectOutput("OnTimer", "TikTools_OnTimer");
     ::TikTools.LOOP_ENT = ent;
-    AddThinkToEnt(ent, "TikTools_ThinkTick");
-    printl("[TikTools] loop iniciado, addon " + ::TikTools.VERSION);
+    printl("[TikTools] loop iniciado (logic_timer), addon " + ::TikTools.VERSION);
 }
 
-function TikTools_ThinkTick() {
-    TikTools_Think();
-    return ::TikTools.POLL_INTERVAL;
+function TikTools_OnTimer() {
+    ::TikTools.SCOPE.TikTools_Think();
 }
 
 function TikTools_Think() {
@@ -106,7 +132,12 @@ function TikTools_Think() {
         return;
     ::TikTools.LAST_POLL = now;
     ::TikTools.TICK++;
-    TikTools_WriteHeartbeat();
+    // Heartbeat about once per second (every 3rd tick): SDKs treat it as
+    // stale only after 5 s, and each disk write costs milliseconds of the
+    // engine's script budget. Commands are still polled every tick.
+    if (::TikTools.TICK % 3 == 0)
+        TikTools_WriteHeartbeat();
+    TikTools_ReloadConfig(false);
     TikTools_PollCommand();
 }
 

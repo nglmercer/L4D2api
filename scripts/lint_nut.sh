@@ -31,6 +31,7 @@ for p in addoninfo.txt \
          scripts/vscripts/tiktools_l4d2/state.nut \
          scripts/vscripts/tiktools_l4d2/actions.nut \
          scripts/vscripts/tiktools_l4d2/spawns.nut \
+         scripts/vscripts/tiktools_l4d2/effects.nut \
          scripts/vscripts/tiktools_l4d2/limits.nut ; do
   if [ ! -f "addon/$p" ]; then echo "MISSING: addon/$p" >&2; fail=1; fi
 done

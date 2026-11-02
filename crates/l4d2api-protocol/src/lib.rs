@@ -38,13 +38,16 @@ pub const WEAPON_MAX: u32 = 5;
 pub const INFECTED_ALLOWLIST: [&str; 8] = [
     "tank", "witch", "smoker", "boomer", "hunter", "spitter", "jockey", "charger",
 ];
-pub const ITEM_ALLOWLIST: [&str; 6] = [
+pub const ITEM_ALLOWLIST: [&str; 9] = [
     "first_aid_kit",
     "pain_pills",
     "adrenaline",
     "pipe_bomb",
     "molotov",
     "defibrillator",
+    "ammo",
+    "upgradepack_incendiary",
+    "upgradepack_explosive",
 ];
 /// Stock L4D2 weapon entity classnames. `weapon_melee_spawn` is the world
 /// pickup entity (the `weapon_melee` script is not itself spawnable).
@@ -70,13 +73,70 @@ pub const WEAPON_ALLOWLIST: [&str; 20] = [
     "weapon_chainsaw",
     "weapon_melee_spawn",
 ];
+/// Amount bound for `heal`, `temp_health` and `damage` (health points).
+pub const AMOUNT_MAX: u32 = 100;
+/// Count bound for `spawn_hazard`.
+pub const HAZARD_MAX: u32 = 3;
+/// Who a player effect applies to.
+pub const TARGET_ALLOWLIST: [&str; 3] = ["all", "host", "random"];
+/// `spawn_hazard` kinds: a detonated propane tank or an ignited gas can.
+pub const HAZARD_ALLOWLIST: [&str; 2] = ["explosion", "fire"];
+/// `give_item` names beyond [`ITEM_ALLOWLIST`]: weapons without the
+/// `weapon_` prefix, plus melee weapons.
+pub const GIVE_EXTRA_ALLOWLIST: [&str; 32] = [
+    "pistol",
+    "pistol_magnum",
+    "smg",
+    "smg_silenced",
+    "smg_mp5",
+    "rifle",
+    "rifle_desert",
+    "rifle_ak47",
+    "rifle_sg552",
+    "shotgun_chrome",
+    "shotgun_spas",
+    "pumpshotgun",
+    "autoshotgun",
+    "hunting_rifle",
+    "sniper_military",
+    "sniper_awp",
+    "sniper_scout",
+    "grenade_launcher",
+    "chainsaw",
+    "katana",
+    "fireaxe",
+    "crowbar",
+    "machete",
+    "baseball_bat",
+    "cricket_bat",
+    "electric_guitar",
+    "frying_pan",
+    "golfclub",
+    "knife",
+    "tonfa",
+    "pitchfork",
+    "shovel",
+];
+
+/// True when `name` is a valid `give_item` item.
+pub fn is_give_item(name: &str) -> bool {
+    ITEM_ALLOWLIST.contains(&name) || GIVE_EXTRA_ALLOWLIST.contains(&name)
+}
+
 /// Capability tokens advertised in heartbeats.
-pub const CAPABILITY_ALLOWLIST: [&str; 5] = [
+pub const CAPABILITY_ALLOWLIST: [&str; 12] = [
     "test_connection",
     "spawn_common",
     "spawn_infected",
     "spawn_item",
     "spawn_weapon",
+    "heal",
+    "temp_health",
+    "damage",
+    "revive",
+    "give_item",
+    "panic",
+    "spawn_hazard",
 ];
 
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -116,6 +176,13 @@ pub enum Action {
     SpawnInfected { class: String, count: u32 },
     SpawnItem { item: String, count: u32 },
     SpawnWeapon { weapon: String, count: u32 },
+    Heal { target: String, amount: u32 },
+    TempHealth { target: String, amount: u32 },
+    Damage { target: String, amount: u32 },
+    Revive { target: String },
+    GiveItem { target: String, item: String },
+    Panic,
+    SpawnHazard { kind: String, count: u32 },
 }
 
 impl Action {
@@ -126,17 +193,26 @@ impl Action {
             Action::SpawnInfected { .. } => "spawn_infected",
             Action::SpawnItem { .. } => "spawn_item",
             Action::SpawnWeapon { .. } => "spawn_weapon",
+            Action::Heal { .. } => "heal",
+            Action::TempHealth { .. } => "temp_health",
+            Action::Damage { .. } => "damage",
+            Action::Revive { .. } => "revive",
+            Action::GiveItem { .. } => "give_item",
+            Action::Panic => "panic",
+            Action::SpawnHazard { .. } => "spawn_hazard",
         }
     }
 
     /// Count requested by TikTools (0 when the action takes no count).
+    /// Player effects report the number of targeted survivors in the result.
     pub fn requested_count(&self) -> u32 {
         match self {
-            Action::TestConnection => 0,
             Action::SpawnCommon { count }
             | Action::SpawnInfected { count, .. }
             | Action::SpawnItem { count, .. }
-            | Action::SpawnWeapon { count, .. } => *count,
+            | Action::SpawnWeapon { count, .. }
+            | Action::SpawnHazard { count, .. } => *count,
+            _ => 0,
         }
     }
 }
@@ -397,6 +473,9 @@ impl<'a> Fields<'a> {
                 "class" => "class",
                 "item" => "item",
                 "weapon" => "weapon",
+                "target" => "target",
+                "amount" => "amount",
+                "kind" => "kind",
                 _ => "field",
             }))
     }
@@ -478,6 +557,45 @@ pub fn encode_command(command: &Command) -> Result<String, Error> {
             lines.push(format!("weapon={weapon}"));
             lines.push(format!("count={count}"));
         }
+        Action::Heal { target, amount }
+        | Action::TempHealth { target, amount }
+        | Action::Damage { target, amount } => {
+            if !TARGET_ALLOWLIST.contains(&target.as_str()) {
+                return Err(Error::Encode("unknown target"));
+            }
+            if !(1..=AMOUNT_MAX).contains(amount) {
+                return Err(Error::Encode("amount out of range 1-100"));
+            }
+            lines.push(format!("target={target}"));
+            lines.push(format!("amount={amount}"));
+        }
+        Action::Revive { target } => {
+            if !TARGET_ALLOWLIST.contains(&target.as_str()) {
+                return Err(Error::Encode("unknown target"));
+            }
+            lines.push(format!("target={target}"));
+        }
+        Action::GiveItem { target, item } => {
+            if !TARGET_ALLOWLIST.contains(&target.as_str()) {
+                return Err(Error::Encode("unknown target"));
+            }
+            if !is_give_item(item) {
+                return Err(Error::Encode("unknown give_item item"));
+            }
+            lines.push(format!("item={item}"));
+            lines.push(format!("target={target}"));
+        }
+        Action::Panic => {}
+        Action::SpawnHazard { kind, count } => {
+            if !HAZARD_ALLOWLIST.contains(&kind.as_str()) {
+                return Err(Error::Encode("unknown hazard kind"));
+            }
+            if !(1..=HAZARD_MAX).contains(count) {
+                return Err(Error::Encode("spawn_hazard count out of range 1-3"));
+            }
+            lines.push(format!("kind={kind}"));
+            lines.push(format!("count={count}"));
+        }
     }
     let record = finish(&lines);
     if record.len() > MAX_RECORD_BYTES {
@@ -486,9 +604,52 @@ pub fn encode_command(command: &Command) -> Result<String, Error> {
     Ok(record)
 }
 
-const COMMAND_KEYS: [&str; 9] = [
-    "v", "seq", "id", "gen", "action", "count", "class", "item", "weapon",
+const COMMAND_KEYS: [&str; 12] = [
+    "v", "seq", "id", "gen", "action", "count", "class", "item", "weapon", "target", "amount",
+    "kind",
 ];
+
+const BASE_KEYS: [&str; 5] = ["v", "seq", "id", "gen", "action"];
+
+/// Reject any key outside the base set plus `params` for this action.
+fn only_keys(fields: &Fields<'_>, action: &str, params: &[&str]) -> Result<(), Error> {
+    for (key, _) in &fields.pairs {
+        if !BASE_KEYS.contains(key) && !params.contains(key) {
+            return Err(Error::BadValue {
+                field: "action",
+                value: action.to_owned(),
+                reason: "unexpected parameter for this action",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn get_target<'a>(fields: &Fields<'a>) -> Result<&'a str, Error> {
+    let target = fields.get("target")?;
+    if TARGET_ALLOWLIST.contains(&target) {
+        Ok(target)
+    } else {
+        Err(Error::BadValue {
+            field: "target",
+            value: target.to_owned(),
+            reason: "must be all|host|random",
+        })
+    }
+}
+
+fn get_bounded(fields: &Fields<'_>, field: &'static str, max: u32) -> Result<u32, Error> {
+    let value = parse_u32(field, fields.get(field)?)?;
+    if (1..=max).contains(&value) {
+        Ok(value)
+    } else {
+        Err(Error::BadValue {
+            field,
+            value: value.to_string(),
+            reason: "out of range",
+        })
+    }
+}
 
 pub fn decode_command(text: &str) -> Result<Command, Error> {
     let content = split_verified(text)?;
@@ -501,6 +662,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
     check_generation(generation)?;
     let action = match fields.get("action")? {
         "test_connection" => {
+            only_keys(&fields, "test_connection", &[])?;
             if fields.maybe("count").is_some()
                 || fields.maybe("class").is_some()
                 || fields.maybe("item").is_some()
@@ -515,6 +677,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             Action::TestConnection
         }
         "spawn_common" => {
+            only_keys(&fields, "spawn_common", &["count"])?;
             let count = parse_u32("count", fields.get("count")?)?;
             if !(1..=COMMON_MAX).contains(&count) {
                 return Err(Error::BadValue {
@@ -536,6 +699,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             Action::SpawnCommon { count }
         }
         "spawn_infected" => {
+            only_keys(&fields, "spawn_infected", &["class", "count"])?;
             let class = fields.get("class")?;
             if !INFECTED_ALLOWLIST.contains(&class) {
                 return Err(Error::BadValue {
@@ -566,6 +730,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             }
         }
         "spawn_item" => {
+            only_keys(&fields, "spawn_item", &["item", "count"])?;
             let item = fields.get("item")?;
             if !ITEM_ALLOWLIST.contains(&item) {
                 return Err(Error::BadValue {
@@ -595,6 +760,7 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             }
         }
         "spawn_weapon" => {
+            only_keys(&fields, "spawn_weapon", &["weapon", "count"])?;
             let weapon = fields.get("weapon")?;
             if !WEAPON_ALLOWLIST.contains(&weapon) {
                 return Err(Error::BadValue {
@@ -621,6 +787,57 @@ pub fn decode_command(text: &str) -> Result<Command, Error> {
             Action::SpawnWeapon {
                 weapon: weapon.to_owned(),
                 count,
+            }
+        }
+        name @ ("heal" | "temp_health" | "damage") => {
+            only_keys(&fields, name, &["target", "amount"])?;
+            let target = get_target(&fields)?.to_owned();
+            let amount = get_bounded(&fields, "amount", AMOUNT_MAX)?;
+            match name {
+                "heal" => Action::Heal { target, amount },
+                "temp_health" => Action::TempHealth { target, amount },
+                _ => Action::Damage { target, amount },
+            }
+        }
+        "revive" => {
+            only_keys(&fields, "revive", &["target"])?;
+            Action::Revive {
+                target: get_target(&fields)?.to_owned(),
+            }
+        }
+        "give_item" => {
+            only_keys(&fields, "give_item", &["target", "item"])?;
+            let target = get_target(&fields)?.to_owned();
+            let item = fields.get("item")?;
+            if !is_give_item(item) {
+                return Err(Error::BadValue {
+                    field: "item",
+                    value: item.to_owned(),
+                    reason: "unknown give_item item",
+                });
+            }
+            Action::GiveItem {
+                target,
+                item: item.to_owned(),
+            }
+        }
+        "panic" => {
+            only_keys(&fields, "panic", &[])?;
+            Action::Panic
+        }
+        "spawn_hazard" => {
+            only_keys(&fields, "spawn_hazard", &["kind", "count"])?;
+            let kind = fields.get("kind")?;
+            if !HAZARD_ALLOWLIST.contains(&kind) {
+                return Err(Error::BadValue {
+                    field: "kind",
+                    value: kind.to_owned(),
+                    reason: "must be explosion|fire",
+                });
+            }
+            Action::SpawnHazard {
+                kind: kind.to_owned(),
+                count: get_bounded(&fields, "count", HAZARD_MAX)?,
             }
         }
         other => {
@@ -840,6 +1057,118 @@ mod round_trip {
         };
         let text = encode_command(&command).unwrap();
         assert_eq!(decode_command(&text).unwrap(), command);
+    }
+
+    fn cmd(action: Action) -> Command {
+        Command {
+            seq: 9,
+            id: "r_9".into(),
+            generation: "g-1".into(),
+            action,
+        }
+    }
+
+    #[test]
+    fn effect_actions_round_trip() {
+        let actions = [
+            Action::Heal {
+                target: "all".into(),
+                amount: 25,
+            },
+            Action::TempHealth {
+                target: "host".into(),
+                amount: 50,
+            },
+            Action::Damage {
+                target: "random".into(),
+                amount: 10,
+            },
+            Action::Revive {
+                target: "all".into(),
+            },
+            Action::GiveItem {
+                target: "host".into(),
+                item: "katana".into(),
+            },
+            Action::GiveItem {
+                target: "all".into(),
+                item: "ammo".into(),
+            },
+            Action::Panic,
+            Action::SpawnHazard {
+                kind: "explosion".into(),
+                count: 3,
+            },
+            Action::SpawnInfected {
+                class: "tank".into(),
+                count: 1,
+            },
+        ];
+        for action in actions {
+            let command = cmd(action);
+            let text = encode_command(&command).unwrap();
+            assert_eq!(decode_command(&text).unwrap(), command, "{text}");
+        }
+    }
+
+    #[test]
+    fn effect_actions_are_bounded() {
+        let bad = [
+            Action::Heal {
+                target: "all".into(),
+                amount: 0,
+            },
+            Action::Damage {
+                target: "all".into(),
+                amount: 101,
+            },
+            Action::Revive {
+                target: "everyone".into(),
+            },
+            Action::GiveItem {
+                target: "host".into(),
+                item: "weapon_smg".into(),
+            },
+            Action::SpawnHazard {
+                kind: "nuke".into(),
+                count: 1,
+            },
+            Action::SpawnHazard {
+                kind: "fire".into(),
+                count: 4,
+            },
+        ];
+        for action in bad {
+            assert!(encode_command(&cmd(action.clone())).is_err(), "{action:?}");
+        }
+    }
+
+    #[test]
+    fn unexpected_parameters_are_rejected() {
+        // spawn_item with a stray target, panic with an amount.
+        for body in [
+            "v=1\nseq=1\nid=r_1\ngen=g-1\naction=spawn_item\nitem=ammo\ncount=1\ntarget=all\n",
+            "v=1\nseq=1\nid=r_1\ngen=g-1\naction=panic\namount=5\n",
+        ] {
+            let text = format!("{body}crc={}\nEND", checksum(body));
+            assert!(decode_command(&text).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn new_capabilities_are_advertisable() {
+        let heartbeat = Heartbeat {
+            generation: "g-1".into(),
+            addon_version: "0.1.0".into(),
+            map: "c1m1_hotel".into(),
+            round_active: true,
+            host_authority: true,
+            gameplay_ready: true,
+            capabilities: CAPABILITY_ALLOWLIST.iter().map(|c| c.to_string()).collect(),
+            tick: 1,
+        };
+        let text = encode_heartbeat(&heartbeat).unwrap();
+        assert_eq!(decode_heartbeat(&text).unwrap(), heartbeat);
     }
 
     #[test]

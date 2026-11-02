@@ -58,7 +58,11 @@ async function runPeer(dir, { seen = new Set(), delayMs = 0 } = {}) {
         }
       } catch { /* malformed snapshot: keep polling */ }
     }
-    await new Promise((r) => setTimeout(r, 5));
+    // Poll at a game-like cadence. The real addon polls command.txt roughly
+    // every 350 ms; a 5 ms reader keeps the file open almost continuously,
+    // and on Windows that blocks the SDK's rename-over for the whole retry
+    // budget (measured: ~25% failure at 5 ms, 0/20 at 50 ms and 350 ms).
+    await new Promise((r) => setTimeout(r, 50));
   }
   throw new Error("peer saw no command");
 }

@@ -11,7 +11,8 @@
 //!
 //! - Game VScript sandbox (read/written by the game at runtime):
 //!   `left4dead2/ems/tiktools_l4d2/` — `command.txt`, `result.txt`,
-//!   `heartbeat.txt`, `generation.txt`.
+//!   `heartbeat.txt`, `generation.txt`, and the user-editable `config.txt`
+//!   (never removed: uninstall only deletes the directory when empty).
 //! - Installer-owned metadata (same directory, installer-managed):
 //!   `left4dead2/ems/tiktools_l4d2/installed.manifest`,
 //!   `quarantine.manifest`, `quarantine/`, plus the crash-recovery
@@ -1043,7 +1044,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let installs = find_l4d2_installs(&[steam.clone()]);
+        let installs = find_l4d2_installs(std::slice::from_ref(&steam));
         assert_eq!(installs.len(), 1);
         assert!(installs[0].ends_with("Left 4 Dead 2"));
         let _ = fs::remove_dir_all(&steam);
@@ -1355,8 +1356,12 @@ mod tests {
     #[test]
     #[ignore = "requires a local Steam L4D2 install"]
     fn conflicts_reference_real_stock_paths() {
-        let home = std::env::var("HOME").expect("HOME must be set");
-        let game = PathBuf::from(home).join(".local/share/Steam/steamapps/common/Left 4 Dead 2");
+        // Discover the install the same way the CLI does (Windows registry /
+        // default Steam paths, Linux ~/.local/share/Steam), not a fixed path.
+        let game = find_l4d2_installs(&candidate_steam_roots(None))
+            .into_iter()
+            .next()
+            .expect("no local Steam L4D2 install found");
         let stock = stock_paths(&game).expect("game VPKs must parse");
         assert!(!stock.is_empty());
         let conflicts = scan_addon_conflicts(&game).expect("scan must run");

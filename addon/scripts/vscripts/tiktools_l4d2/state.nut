@@ -96,14 +96,23 @@ function TikTools_GameplayReady() {
 }
 
 function TikTools_WriteHeartbeat() {
+    // Re-probe capabilities about every 7 s (every 21 ticks, a multiple of
+    // the heartbeat cadence, including the first heartbeat of a generation)
+    // instead of on every heartbeat, to keep the timer cheap.
+    if (::TikTools.TICK % 21 == 0) {
+        try { TikTools_ComputeCaps(); } catch (e) { }
+    }
+    // Each check walks players / queries the host: compute once.
+    local host = TikTools_IsHost();
+    local round = TikTools_InRound();
     local lines = [
         "v=1",
         "gen=" + ::TikTools.GENERATION,
         "addon=" + ::TikTools.VERSION,
         "map=" + TikTools_CurrentMap(),
-        "round=" + (TikTools_InRound() ? "1" : "0"),
-        "host=" + (TikTools_IsHost() ? "1" : "0"),
-        "ready=" + (TikTools_GameplayReady() ? "1" : "0"),
+        "round=" + (round ? "1" : "0"),
+        "host=" + (host ? "1" : "0"),
+        "ready=" + (host && round ? "1" : "0"),
         "caps=" + ::TikTools.CAPS,
         "tick=" + ::TikTools.TICK.tostring(),
     ];

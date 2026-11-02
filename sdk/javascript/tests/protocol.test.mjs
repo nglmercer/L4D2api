@@ -117,3 +117,46 @@ describe("shared fixtures", () => {
     for (const name of names) assert.ok(known.has(name), `unpinned fixture: ${name}`);
   });
 });
+
+describe("effect actions", () => {
+  const roundtrip = (action, params) => {
+    const text = encodeCommand({ seq: 9, id: "r_9", generation: "g-1", action, params });
+    const decoded = decodeCommand(text);
+    assert.equal(decoded.action, action);
+    assert.deepEqual(decoded.params, params);
+  };
+
+  it("round-trips every new action", () => {
+    roundtrip("heal", { target: "all", amount: "25" });
+    roundtrip("temp_health", { target: "host", amount: "50" });
+    roundtrip("damage", { target: "random", amount: "10" });
+    roundtrip("revive", { target: "all" });
+    roundtrip("give_item", { item: "katana", target: "host" });
+    roundtrip("give_item", { item: "ammo", target: "all" });
+    roundtrip("panic", {});
+    roundtrip("spawn_hazard", { kind: "explosion", count: "3" });
+  });
+
+  it("enforces bounds and allowlists", () => {
+    const bad = [
+      ["heal", { target: "all", amount: "0" }],
+      ["damage", { target: "all", amount: "101" }],
+      ["revive", { target: "everyone" }],
+      ["give_item", { item: "weapon_smg", target: "host" }],
+      ["spawn_hazard", { kind: "nuke", count: "1" }],
+      ["spawn_hazard", { kind: "fire", count: "4" }],
+    ];
+    for (const [action, params] of bad) {
+      assert.throws(
+        () => encodeCommand({ seq: 1, id: "r_1", generation: "g-1", action, params }),
+        undefined,
+        `${action} ${JSON.stringify(params)}`,
+      );
+    }
+  });
+
+  it("rejects a stray parameter", () => {
+    const body = "v=1\nseq=1\nid=r_1\ngen=g-1\naction=panic\namount=5\n";
+    assert.throws(() => decodeCommand(`${body}crc=${checksum(body)}\nEND`));
+  });
+});

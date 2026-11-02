@@ -95,5 +95,45 @@ class TestFixtures(unittest.TestCase):
         self.assertEqual(protocol.encode_command(cmd), fixture("command_valid.txt"))
 
 
+class TestEffectActions(unittest.TestCase):
+    def roundtrip(self, action, params):
+        cmd = protocol.Command(seq=9, id="r_9", generation="g-1", action=action, params=params)
+        decoded = protocol.decode_command(protocol.encode_command(cmd))
+        self.assertEqual((decoded.action, decoded.params), (action, params))
+
+    def test_round_trips(self):
+        self.roundtrip("heal", {"target": "all", "amount": "25"})
+        self.roundtrip("temp_health", {"target": "host", "amount": "50"})
+        self.roundtrip("damage", {"target": "random", "amount": "10"})
+        self.roundtrip("revive", {"target": "all"})
+        self.roundtrip("give_item", {"item": "katana", "target": "host"})
+        self.roundtrip("give_item", {"item": "ammo", "target": "all"})
+        self.roundtrip("panic", {})
+        self.roundtrip("spawn_hazard", {"kind": "fire", "count": "2"})
+
+    def test_bounds_and_allowlists(self):
+        bad = [
+            ("heal", {"target": "all", "amount": "0"}),
+            ("damage", {"target": "all", "amount": "101"}),
+            ("revive", {"target": "everyone"}),
+            ("give_item", {"item": "weapon_smg", "target": "host"}),
+            ("spawn_hazard", {"kind": "nuke", "count": "1"}),
+            ("spawn_hazard", {"kind": "fire", "count": "4"}),
+        ]
+        for action, params in bad:
+            cmd = protocol.Command(seq=1, id="r_1", generation="g-1", action=action, params=params)
+            with self.assertRaises(protocol.ProtocolError, msg=f"{action} {params}"):
+                protocol.encode_command(cmd)
+
+    def test_stray_parameter_rejected(self):
+        body = "v=1\nseq=1\nid=r_1\ngen=g-1\naction=panic\namount=5\n"
+        text = body + f"crc={protocol.checksum(body)}\nEND"
+        with self.assertRaises(protocol.ProtocolError):
+            protocol.decode_command(text)
+
+    def test_all_capabilities_advertisable(self):
+        self.assertTrue({"heal", "give_item", "spawn_hazard", "panic"} <= protocol.CAPABILITY_ALLOWLIST)
+
+
 if __name__ == "__main__":
     unittest.main()

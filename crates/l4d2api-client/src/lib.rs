@@ -29,6 +29,11 @@ pub const LOCK_FILE: &str = "command.lock";
 pub const DEFAULT_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default: a lock untouched for this long may be reclaimed.
 pub const DEFAULT_LOCK_STALE_AFTER: Duration = Duration::from_secs(30);
+/// Total budget for retrying a rename blocked by a reader (Windows).
+const RENAME_RETRY_BUDGET: Duration = Duration::from_secs(2);
+/// Re-reads of a heartbeat caught mid-write by the game (~100 ms total).
+const TORN_READ_ATTEMPTS: u32 = 5;
+const TORN_READ_DELAY: Duration = Duration::from_millis(20);
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -205,13 +210,21 @@ impl Client {
 
     /// Read and validate the current heartbeat, if any.
     pub fn heartbeat(&self) -> Result<Option<proto::Heartbeat>, Error> {
-        match self.read_record(HEARTBEAT_FILE)? {
-            None => Ok(None),
-            Some(text) => match proto::decode_heartbeat(&text) {
-                Ok(heartbeat) => Ok(Some(heartbeat)),
-                Err(_) => Ok(None),
-            },
+        // The game rewrites heartbeat.txt every ~0.35 s, so a read can catch
+        // it mid-write. Re-read a torn snapshot briefly (reads only; nothing
+        // is re-sent) before reporting no heartbeat.
+        for attempt in 0..TORN_READ_ATTEMPTS {
+            let Some(text) = self.read_record(HEARTBEAT_FILE)? else {
+                return Ok(None);
+            };
+            if let Ok(heartbeat) = proto::decode_heartbeat(&text) {
+                return Ok(Some(heartbeat));
+            }
+            if attempt + 1 < TORN_READ_ATTEMPTS {
+                std::thread::sleep(TORN_READ_DELAY);
+            }
         }
+        Ok(None)
     }
 
     /// Read the heartbeat plus its file age. `None` when no valid heartbeat
@@ -427,24 +440,24 @@ impl Client {
             let _ = fs::remove_file(&tmp);
             return Err(Error::Io(error));
         }
-        let mut attempts = 0;
+        // Windows fails the rename with access-denied while the game holds
+        // command.txt open. Retry transient lock errors within a time budget.
+        let deadline = std::time::Instant::now() + RENAME_RETRY_BUDGET;
         loop {
             match fs::rename(&tmp, &target) {
                 Ok(()) => return Ok(()),
                 Err(error) => {
-                    attempts += 1;
-                    // Retry only transient sharing/lock errors, bounded.
                     let retryable = matches!(
                         error.kind(),
                         io::ErrorKind::PermissionDenied
                             | io::ErrorKind::WouldBlock
                             | io::ErrorKind::Interrupted
                     );
-                    if !retryable || attempts >= 20 {
+                    if !retryable || std::time::Instant::now() >= deadline {
                         let _ = fs::remove_file(&tmp);
                         return Err(Error::Io(error));
                     }
-                    std::thread::sleep(Duration::from_millis(25));
+                    std::thread::sleep(Duration::from_millis(10));
                 }
             }
         }
@@ -505,6 +518,60 @@ impl Client {
     pub fn spawn_weapon(&mut self, weapon: &str, count: u32) -> Result<TypedResponse, Error> {
         self.send_auto(proto::Action::SpawnWeapon {
             weapon: weapon.to_owned(),
+            count,
+        })
+    }
+
+    /// Restore permanent health. `target` is `all`, `host` or `random`;
+    /// `requested` in the reply is the number of survivors targeted.
+    pub fn heal(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Heal {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Add temporary (pills-style) health, never past the maximum.
+    pub fn temp_health(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::TempHealth {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Damage survivors (also capped by `damage_max` in the game config).
+    pub fn damage(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Damage {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Revive incapacitated survivors.
+    pub fn revive(&mut self, target: &str) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Revive {
+            target: target.to_owned(),
+        })
+    }
+
+    /// Put an item straight into survivors' inventories (`ammo` refills).
+    pub fn give_item(&mut self, target: &str, item: &str) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::GiveItem {
+            target: target.to_owned(),
+            item: item.to_owned(),
+        })
+    }
+
+    /// Start a horde (panic) event.
+    pub fn panic(&mut self) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Panic)
+    }
+
+    /// Detonate a propane tank (`explosion`) or ignite a gas can (`fire`)
+    /// near the survivors, 1-3 at a time.
+    pub fn spawn_hazard(&mut self, kind: &str, count: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::SpawnHazard {
+            kind: kind.to_owned(),
             count,
         })
     }
@@ -758,9 +825,24 @@ mod peer {
         .unwrap();
         let peer_dir = dir.clone();
         let peer = std::thread::spawn(move || {
+            // Like the game: answer only the command that was actually written,
+            // using its own sequence number. A reply to a command that was never
+            // sent would race the client's sequence recovery in send_locked.
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let command = loop {
+                if let Ok(text) = fs::read_to_string(peer_dir.join(COMMAND_FILE)) {
+                    if let Ok(command) = proto::decode_command(&text) {
+                        if command.id == "r_new" {
+                            break command;
+                        }
+                    }
+                }
+                assert!(Instant::now() < deadline, "peer saw no command");
+                std::thread::sleep(Duration::from_millis(5));
+            };
             std::thread::sleep(Duration::from_millis(50));
             let reply = proto::encode_result(&proto::ResultRecord {
-                seq: 3,
+                seq: command.seq,
                 id: "r_new".into(),
                 generation: "g-1".into(),
                 status: proto::Status::Rejected,

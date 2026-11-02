@@ -20,17 +20,16 @@ Transport is files, not HTTP: the SDKs and the game exchange
   JavaScript/TypeScript, pinned to shared fixtures (`tests/fixtures/`).
 - **Session clients**: single-writer lock, atomic writes, heartbeat
   freshness, typed errors, unique request ids, no gameplay auto-retries.
-- **Game side**: `test_connection`, `spawn_item`, `spawn_weapon` against
-  stock world-pickup entities (implemented; live-game verification pending
-  the recorded evidence gate — see below).
-- `spawn_common` is experimental and requires live-game verification;
-  `spawn_infected` remains capability-gated.
+- **Game side**: every action below returned its expected result in a
+  recorded live run (Windows 11, L4D2 build 10097, single-player local
+  host, `sv_cheats 0`): item, weapon, ammo and upgrade-pack spawns; common
+  and special infected (incl. witch and tank); panic; heal, temp health,
+  damage, revive and give item; fire and explosion hazards.
+- **Config with hot reload**: per-action cooldowns, `round_cap` and
+  `damage_max` in `ems/tiktools_l4d2/config.txt`, applied in about a second.
 
-User report (unrecorded): the reporter states the L4D2 integration is now
-working in their local-host session. That report is tracked as
-user-reported success in [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md),
-separate from reproducible test evidence, which is still required before
-any `verified` label changes.
+Evidence, builds and what is still untested (map transitions, a second
+human player, long bursts): [docs/WINDOWS_TESTING.md](docs/WINDOWS_TESTING.md).
 
 ## Quick installation (Windows 10/11, Steam L4D2)
 
@@ -58,16 +57,16 @@ Full matrix: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
 | Action | Arguments | Status |
 |---|---|---|
-| `test_connection` | — | working (readiness-gated) |
-| `spawn_item` | `item`, `count` 1–5 | working (verified in a local-host session) |
-| `spawn_weapon` | `weapon`, `count` 1–5 | working (verified in a local-host session) |
-| `spawn_common` | `count` 1–10 | experimental; live verification pending |
-| `spawn_infected` | `class`, `count` | implemented via `ZSpawn`; live verification pending |
-| `heal` / `temp_health` / `damage` | `target`, `amount` 1–100 | implemented; live verification pending |
-| `revive` | `target` | implemented; live verification pending |
-| `give_item` | `target`, `item` | implemented; live verification pending |
-| `panic` | — | implemented; live verification pending |
-| `spawn_hazard` | `kind` (`explosion`/`fire`), `count` 1–3 | implemented; live verification pending |
+| `test_connection` | — | verified live (readiness-gated) |
+| `spawn_item` | `item`, `count` 1–5 | verified live (incl. `ammo` pile and upgrade packs) |
+| `spawn_weapon` | `weapon`, `count` 1–5 | verified live (all 20 weapons) |
+| `spawn_common` | `count` 1–10 | verified live |
+| `spawn_infected` | `class`, `count` (tank exactly 1) | verified live: hunter, witch, tank |
+| `heal` / `temp_health` / `damage` | `target`, `amount` 1–100 | verified live |
+| `revive` | `target` | verified live |
+| `give_item` | `target`, `item` | verified live (molotov to all) |
+| `panic` | — | verified live (`ZSpawn` horde; this game has no `ForcePanicEvent`) |
+| `spawn_hazard` | `kind` (`explosion`/`fire`), `count` 1–3 | verified live |
 
 `target` is `all`, `host` or `random`. Actions are advertised in the
 heartbeat only when the running game has the engine functions they need.

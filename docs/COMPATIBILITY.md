@@ -23,20 +23,23 @@ design), `blocked` (cannot work by construction).
 
 | Capability | Label | Notes |
 |---|---|---|
-| `test_connection` | `experimental` | readiness-gated; user-reported working, evidence still required |
-| `spawn_item` | `experimental` | stock world pickups; user-reported working, evidence still required |
-| `spawn_weapon` | `experimental` | stock world pickups; user-reported working, evidence still required |
-| `spawn_common` | `experimental` | engine entity spawning; live verification pending |
-| `spawn_infected` | `unsupported` | gated `CAPABILITY_UNAVAILABLE` until proven with `sv_cheats 0` |
+| `test_connection` | `verified` | readiness-gated |
+| `spawn_item` | `verified` | stock world pickups, incl. ammo pile and both upgrade packs |
+| `spawn_weapon` | `verified` | all 20 allowlisted weapons |
+| `spawn_common` | `verified` | 10 per request |
+| `spawn_infected` | `verified` | `ZSpawn` near the survivors: hunter, witch, tank seen live; smoker, boomer, spitter, jockey, charger use the same path but were not run |
+| `panic` | `verified` | no `Director.ForcePanicEvent` in this runtime; a `ZSpawn` mob near the survivors |
+| `heal` / `temp_health` / `damage` | `verified` | `target` all, host or random |
+| `revive` | `verified` | downed survivors only |
+| `give_item` | `verified` | molotov to all seen live; other names use the same `GiveItem` call |
+| `spawn_hazard` | `verified` | fire and explosion |
 
-The user reports the integration is now working in their local-host
-session. That report is recorded (not dismissed) in
-[WINDOWS_TESTING.md](WINDOWS_TESTING.md), but per-capability labels stay
-`experimental` until reproducible evidence (versions, hashes, observed
-behavior) is on record. Nothing here is marked `verified` on the basis of
-an unrecorded session, and nothing in the SDKs advertises a gated action
-as available: `capabilities()` only lists what the game's live heartbeat
-advertises.
+`verified` means the action returned the expected result in the recorded
+single-player local-host run in [WINDOWS_TESTING.md](WINDOWS_TESTING.md)
+(Windows 11, L4D2 build 10097, `sv_cheats 0`). It does not yet cover map
+transitions, a second human player or long bursts; those rows in the test
+plan are still open. Capabilities are probed in-game, and SDKs only
+advertise what the live heartbeat lists.
 
 ## Workshop mods and consistency kicks
 

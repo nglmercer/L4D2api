@@ -2,7 +2,9 @@
 
 Suites run without a real L4D2 install (mock VScript peers + temp dirs),
 except the Windows live gate ([WINDOWS_TESTING.md](WINDOWS_TESTING.md),
-not run here) and one ignored test requiring a local Steam install.
+one recorded run so far) and one ignored test that needs a local Steam
+install (`cargo test -p l4d2api-installer -- --ignored`; it finds the
+install through the installer's own Steam discovery).
 
 ## Commands
 

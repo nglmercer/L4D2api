@@ -1,9 +1,9 @@
 // bootstrap.nut -- addon startup, session generation, heartbeat loop.
 //
-// PROTOTYPE (live gate BLOCKED): every engine behavior assumed here must be
-// proven in a real Windows Steam local campaign before any claim of
-// compatibility. Fail closed: no host authority or no round means no
-// mutations, only heartbeat/status reads.
+// Engine behavior here is verified in a Windows Steam local campaign (see
+// docs/WINDOWS_TESTING.md); map transitions are not yet recorded. Fail
+// closed: no host authority or no round means no mutations, only
+// heartbeat/status reads.
 
 ::TikTools <- {
     VERSION = "0.1.0",
@@ -132,7 +132,11 @@ function TikTools_Think() {
         return;
     ::TikTools.LAST_POLL = now;
     ::TikTools.TICK++;
-    TikTools_WriteHeartbeat();
+    // Heartbeat about once per second (every 3rd tick): SDKs treat it as
+    // stale only after 5 s, and each disk write costs milliseconds of the
+    // engine's script budget. Commands are still polled every tick.
+    if (::TikTools.TICK % 3 == 0)
+        TikTools_WriteHeartbeat();
     TikTools_ReloadConfig(false);
     TikTools_PollCommand();
 }

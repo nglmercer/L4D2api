@@ -60,7 +60,10 @@ END
   `chainsaw`), or melee (`katana fireaxe crowbar machete baseball_bat
   cricket_bat electric_guitar frying_pan golfclub knife tonfa pitchfork
   shovel`).
-- `panic` takes no parameters (starts a horde event).
+- `panic` takes no parameters and starts a horde: `Director.ForcePanicEvent`
+  when the runtime has it (the live Windows runtime does not), otherwise a
+  `ZSpawn` mob placed near the survivors. If both are refused, a wave of 10
+  common infected is spawned and `diag` says `horde fallback`.
 - `spawn_hazard` takes `kind` (`explosion`: detonated propane tank, `fire`:
   ignited gas can) + `count` 1-3, placed ~200 units from the survivors.
 - Capabilities are probed in-game: the heartbeat's `caps` lists only actions
@@ -148,10 +151,12 @@ END
 A heartbeat alone never means gameplay ready: `ready=1` additionally
 requires host authority and an active round, and clients freshness-check
 the file age plus `tick` progression — a valid but old heartbeat reads as
-stale, never ready. `caps` advertises per-capability support so unverified
-special spawns stay gated (`spawn_infected` is absent from `caps`
-until proven). Poll conservatively (~250-500 ms in an active session); no
-per-frame disk reads.
+stale, never ready. `caps` lists only the actions whose engine functions
+the running game actually has (probed in-game about every 7 s), so a
+runtime without, say, `ZSpawn` never advertises `spawn_infected`. The game
+writes the heartbeat about once per second; SDKs re-read a heartbeat
+caught mid-write before reporting it missing. Poll conservatively
+(~250-500 ms in an active session); no per-frame disk reads.
 
 ## Generation lifecycle
 

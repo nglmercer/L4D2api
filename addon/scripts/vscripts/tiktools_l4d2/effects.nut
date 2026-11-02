@@ -37,6 +37,23 @@ function TikTools_HasDirector(name) {
     }
 }
 
+// Diagnostic, once per generation: list Director members that look like a
+// panic/mob/horde API, so the next build can call the right one.
+function TikTools_LogDirectorApi() {
+    try {
+        local found = "";
+        foreach (key, value in Director.getclass()) {
+            local name = key.tostring();
+            local low = name.tolower();
+            if (low.find("panic") != null || low.find("mob") != null || low.find("horde") != null)
+                found += name + " ";
+        }
+        printl("[TikTools] Director API panic/mob/horde: " + (found == "" ? "(none)" : found));
+    } catch (e) {
+        printl("[TikTools] Director API: not listable (" + TikTools_Diag(e) + ")");
+    }
+}
+
 function TikTools_PlayerHas(host, probe, name) {
     return !probe || TikTools_HasMember(host, name);
 }
@@ -46,7 +63,7 @@ function TikTools_ComputeCaps() {
     local caps = ["test_connection", "spawn_common", "spawn_item", "spawn_weapon"];
     if (TikTools_HasGlobal("ZSpawn"))
         caps.append("spawn_infected");
-    if (TikTools_HasDirector("ForcePanicEvent"))
+    if (TikTools_HasDirector("ForcePanicEvent") || TikTools_HasGlobal("ZSpawn"))
         caps.append("panic");
 
     local host = null;
@@ -268,14 +285,38 @@ function TikTools_GiveItem(target, item) {
 }
 
 function TikTools_Panic() {
+    // ZSpawn type 10 is a mob (horde); used when Director.ForcePanicEvent
+    // is missing, which it is in the live Windows runtime.
+    local mobType = 10;
+    local lastError = null;
     try {
         Director.ForcePanicEvent();
         return { ok = true, requested = 1, actual = 1, code = "OK", diag = "panic event started" };
     } catch (e) {
-        return { ok = false, requested = 1, actual = 0,
-                 code = TikTools_IsMissingApi(e) ? "CAPABILITY_UNAVAILABLE" : "SPAWN_FAILED",
-                 diag = TikTools_Diag(e) };
+        lastError = e;
     }
+    try {
+        // Live: ZSpawn refused the mob without a position; specials spawn
+        // fine with one, so try near the survivors first.
+        local anchor = TikTools_FindSurvivorAnchor();
+        if (anchor != null && ZSpawn({ type = mobType, pos = anchor.GetOrigin() + Vector(300, 0, 16) }) == true)
+            return { ok = true, requested = 1, actual = 1, code = "OK", diag = "horde spawned (ZSpawn mob)" };
+        if (ZSpawn({ type = mobType }) == true)
+            return { ok = true, requested = 1, actual = 1, code = "OK", diag = "horde spawned (ZSpawn mob)" };
+    } catch (e) {
+        lastError = e;
+    }
+    // Last resort: a wave of common infected next to the survivors. Not a
+    // director panic event, and the diag says so.
+    local wave = TikTools_SpawnBunch("infected", 10);
+    if (wave.ok) {
+        TikTools_NoteSpawn("common", wave.actual);
+        return { ok = true, requested = 1, actual = 1, code = "OK",
+                 diag = "horde fallback: " + wave.actual + " common infected (no director panic API)" };
+    }
+    return { ok = false, requested = 1, actual = 0,
+             code = TikTools_IsMissingApi(lastError) ? "CAPABILITY_UNAVAILABLE" : "SPAWN_FAILED",
+             diag = TikTools_Diag(lastError) };
 }
 
 // --- special infected (ZSpawn) -------------------------------------------------

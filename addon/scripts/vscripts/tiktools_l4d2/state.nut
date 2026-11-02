@@ -96,7 +96,12 @@ function TikTools_GameplayReady() {
 }
 
 function TikTools_WriteHeartbeat() {
-    try { TikTools_ComputeCaps(); } catch (e) { }
+    // Re-probe capabilities about every 7 s (every 20 ticks, including the
+    // first heartbeat of a generation) instead of every tick: probing on
+    // each 0.35 s tick pushed the timer past the engine's perf warning.
+    if (::TikTools.TICK % 20 == 0) {
+        try { TikTools_ComputeCaps(); } catch (e) { }
+    }
     local lines = [
         "v=1",
         "gen=" + ::TikTools.GENERATION,

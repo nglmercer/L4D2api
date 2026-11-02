@@ -67,6 +67,7 @@ function TikTools_NewGeneration() {
     TikTools_ResetRoundCounters();
     TikTools_ResetOwned();
     TikTools_ReloadConfig(true);
+    TikTools_LogDirectorApi();
     TikTools_WriteHeartbeat();
 }
 

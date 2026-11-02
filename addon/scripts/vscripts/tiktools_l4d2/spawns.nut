@@ -37,6 +37,9 @@ function TikTools_ItemClassname(item) {
         case "pipe_bomb":     return "weapon_pipe_bomb";
         case "molotov":       return "weapon_molotov";
         case "defibrillator": return "weapon_defibrillator";
+        case "ammo":          return "weapon_ammo_spawn";
+        case "upgradepack_incendiary": return "weapon_upgradepack_incendiary";
+        case "upgradepack_explosive":  return "weapon_upgradepack_explosive";
         default:              return null;
     }
 }
@@ -161,6 +164,12 @@ function TikTools_SpawnBunch(classname, count) {
                 table.melee_weapon <- "any";
                 table.spawnflags <- 3;
             }
+            if (classname == "weapon_ammo_spawn") {
+                // World ammo pile: needs its stock model, and is static
+                // rather than a physics pickup.
+                table.model <- "models/props/terror/ammo_stack.mdl";
+                table.solid <- "0";
+            }
             local entity = SpawnEntityFromTable(classname, table);
             if (entity != null && entity.IsValid() && entity.GetClassname() == classname) {
                 actual++;
@@ -181,10 +190,6 @@ function TikTools_SpawnBunch(classname, count) {
 function TikTools_SpawnCommon(count) {
     // Count only engine-confirmed entity handles; live behavior remains experimental.
     return TikTools_SpawnBunch("infected", count);
-}
-
-function TikTools_SpawnSpecial(classname, count) {
-    return { ok = false, actual = 0, code = "CAPABILITY_UNAVAILABLE", diag = "special spawn unverified" };
 }
 
 function TikTools_SpawnItem(item, count) {

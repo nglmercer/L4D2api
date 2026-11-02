@@ -98,7 +98,35 @@ function TikTools_IsToken(text, maxLen) {
 function TikTools_IsActionName(text) {
     return text == "test_connection" || text == "spawn_common"
         || text == "spawn_infected" || text == "spawn_item"
-        || text == "spawn_weapon";
+        || text == "spawn_weapon" || text == "heal"
+        || text == "temp_health" || text == "damage"
+        || text == "revive" || text == "give_item"
+        || text == "panic" || text == "spawn_hazard";
+}
+
+function TikTools_IsTarget(text) {
+    return text == "all" || text == "host" || text == "random";
+}
+
+function TikTools_IsHazardKind(text) {
+    return text == "explosion" || text == "fire";
+}
+
+// give_item names: items, weapons without the `weapon_` prefix, melee.
+function TikTools_IsGiveItem(text) {
+    if (TikTools_IsItemName(text))
+        return true;
+    local allowed = [
+        "pistol", "pistol_magnum", "smg", "smg_silenced", "smg_mp5",
+        "rifle", "rifle_desert", "rifle_ak47", "rifle_sg552",
+        "shotgun_chrome", "shotgun_spas", "pumpshotgun", "autoshotgun",
+        "hunting_rifle", "sniper_military", "sniper_awp", "sniper_scout",
+        "grenade_launcher", "chainsaw",
+        "katana", "fireaxe", "crowbar", "machete", "baseball_bat",
+        "cricket_bat", "electric_guitar", "frying_pan", "golfclub",
+        "knife", "tonfa", "pitchfork", "shovel",
+    ];
+    return allowed.find(text) != null;
 }
 
 function TikTools_IsInfectedClass(text) {
@@ -110,7 +138,9 @@ function TikTools_IsInfectedClass(text) {
 function TikTools_IsItemName(text) {
     return text == "first_aid_kit" || text == "pain_pills"
         || text == "adrenaline" || text == "pipe_bomb"
-        || text == "molotov" || text == "defibrillator";
+        || text == "molotov" || text == "defibrillator"
+        || text == "ammo" || text == "upgradepack_incendiary"
+        || text == "upgradepack_explosive";
 }
 
 function TikTools_IsWeaponName(text) {
@@ -277,6 +307,40 @@ function TikTools_ParseCommand(raw) {
         if (!TikTools_IsWeaponName(fields["weapon"]))
             return null;
         count = TikTools_ParseCount(fields["count"], 1, 5);
+        if (count == null)
+            return null;
+    } else if (action == "heal" || action == "temp_health" || action == "damage") {
+        allowed.append("target");
+        allowed.append("amount");
+        if (!("target" in fields) || !("amount" in fields))
+            return null;
+        if (!TikTools_IsTarget(fields["target"]))
+            return null;
+        local amount = TikTools_ParseCount(fields["amount"], 1, 100);
+        if (amount == null)
+            return null;
+        fields["amount"] = amount;
+    } else if (action == "revive") {
+        allowed.append("target");
+        if (!("target" in fields) || !TikTools_IsTarget(fields["target"]))
+            return null;
+    } else if (action == "give_item") {
+        allowed.append("target");
+        allowed.append("item");
+        if (!("target" in fields) || !("item" in fields))
+            return null;
+        if (!TikTools_IsTarget(fields["target"]) || !TikTools_IsGiveItem(fields["item"]))
+            return null;
+    } else if (action == "panic") {
+        // No parameters at all.
+    } else if (action == "spawn_hazard") {
+        allowed.append("kind");
+        allowed.append("count");
+        if (!("kind" in fields) || !("count" in fields))
+            return null;
+        if (!TikTools_IsHazardKind(fields["kind"]))
+            return null;
+        count = TikTools_ParseCount(fields["count"], 1, 3);
         if (count == null)
             return null;
     }

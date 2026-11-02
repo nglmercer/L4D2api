@@ -14,7 +14,16 @@
     TANK_COOLDOWN = 120.0,
     ITEM_COOLDOWN = 0.0,
     WEAPON_COOLDOWN = 0.0,
-    LAST = { common = -9999.0, special = -9999.0, tank = -9999.0, item = -9999.0, weapon = -9999.0 },
+    HEAL_COOLDOWN = 0.0,
+    DAMAGE_COOLDOWN = 0.0,
+    REVIVE_COOLDOWN = 0.0,
+    GIVE_COOLDOWN = 0.0,
+    PANIC_COOLDOWN = 0.0,
+    HAZARD_COOLDOWN = 0.0,
+    DAMAGE_MAX = 100,
+    LAST = { common = -9999.0, special = -9999.0, tank = -9999.0, item = -9999.0, weapon = -9999.0,
+             heal = -9999.0, damage = -9999.0, revive = -9999.0, give = -9999.0,
+             panic = -9999.0, hazard = -9999.0 },
     ROUND_SPAWNED = 0,
     ROUND_CAP = 60,
 };
@@ -45,6 +54,12 @@ function TikTools_ResetRoundCounters() {
     ::TikToolsLimits.LAST.tank = -9999.0;
     ::TikToolsLimits.LAST.item = -9999.0;
     ::TikToolsLimits.LAST.weapon = -9999.0;
+    ::TikToolsLimits.LAST.heal = -9999.0;
+    ::TikToolsLimits.LAST.damage = -9999.0;
+    ::TikToolsLimits.LAST.revive = -9999.0;
+    ::TikToolsLimits.LAST.give = -9999.0;
+    ::TikToolsLimits.LAST.panic = -9999.0;
+    ::TikToolsLimits.LAST.hazard = -9999.0;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,6 +87,13 @@ function TikTools_ResetRoundCounters() {
     special_cooldown = ["SPECIAL_COOLDOWN", 0.0, 600.0, 30.0, false],
     tank_cooldown = ["TANK_COOLDOWN", 0.0, 600.0, 120.0, false],
     round_cap = ["ROUND_CAP", 1.0, 1000.0, 60.0, true],
+    heal_cooldown = ["HEAL_COOLDOWN", 0.0, 600.0, 0.0, false],
+    damage_cooldown = ["DAMAGE_COOLDOWN", 0.0, 600.0, 0.0, false],
+    revive_cooldown = ["REVIVE_COOLDOWN", 0.0, 600.0, 0.0, false],
+    give_cooldown = ["GIVE_COOLDOWN", 0.0, 600.0, 0.0, false],
+    panic_cooldown = ["PANIC_COOLDOWN", 0.0, 600.0, 0.0, false],
+    hazard_cooldown = ["HAZARD_COOLDOWN", 0.0, 600.0, 0.0, false],
+    damage_max = ["DAMAGE_MAX", 1.0, 100.0, 100.0, true],
 };
 
 function TikTools_DefaultConfigText() {
@@ -82,7 +104,14 @@ function TikTools_DefaultConfigText() {
         + "common_cooldown=0\n"
         + "special_cooldown=30\n"
         + "tank_cooldown=120\n"
-        + "round_cap=60\n";
+        + "round_cap=60\n"
+        + "heal_cooldown=0\n"
+        + "damage_cooldown=0\n"
+        + "revive_cooldown=0\n"
+        + "give_cooldown=0\n"
+        + "panic_cooldown=0\n"
+        + "hazard_cooldown=0\n"
+        + "damage_max=100\n";
 }
 
 // Parse one `key=value` line into `out`, ignoring blanks, spaces and comments.
@@ -163,5 +192,12 @@ function TikTools_ReloadConfig(force) {
         + " common=" + ::TikToolsLimits.COMMON_COOLDOWN
         + " special=" + ::TikToolsLimits.SPECIAL_COOLDOWN
         + " tank=" + ::TikToolsLimits.TANK_COOLDOWN
-        + " round_cap=" + ::TikToolsLimits.ROUND_CAP);
+        + " round_cap=" + ::TikToolsLimits.ROUND_CAP
+        + " heal=" + ::TikToolsLimits.HEAL_COOLDOWN
+        + " damage=" + ::TikToolsLimits.DAMAGE_COOLDOWN
+        + " revive=" + ::TikToolsLimits.REVIVE_COOLDOWN
+        + " give=" + ::TikToolsLimits.GIVE_COOLDOWN
+        + " panic=" + ::TikToolsLimits.PANIC_COOLDOWN
+        + " hazard=" + ::TikToolsLimits.HAZARD_COOLDOWN
+        + " damage_max=" + ::TikToolsLimits.DAMAGE_MAX);
 }

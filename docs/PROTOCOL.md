@@ -45,12 +45,34 @@ END
   request — ids are the replay-protection key `(generation, id)`.
 - `gen`: game generation pinned at VScript startup; commands from an old
   generation never execute after relaunch/map change.
-- `action`: `test_connection | spawn_common | spawn_infected | spawn_item | spawn_weapon`.
+- `action`: `test_connection | spawn_common | spawn_infected | spawn_item |
+  spawn_weapon | heal | temp_health | damage | revive | give_item | panic |
+  spawn_hazard`.
+- Player effects: `heal`, `temp_health`, `damage` take `target` + `amount`
+  (1-100 health points); `revive` takes `target`; `give_item` takes
+  `target` + `item`. `target` is `all | host | random` (living survivors).
+  For these, the result's `requested` is the number of survivors targeted
+  and `actual` how many actually changed (e.g. `heal` skips full-health and
+  incapacitated survivors). `damage` above the game's `damage_max` config is
+  refused with `AMOUNT_LIMIT`.
+- `give_item` `item`: any `item` value above (`ammo` refills ammo), weapons
+  without the `weapon_` prefix (`smg`, `rifle_ak47`, `sniper_awp`, ...,
+  `chainsaw`), or melee (`katana fireaxe crowbar machete baseball_bat
+  cricket_bat electric_guitar frying_pan golfclub knife tonfa pitchfork
+  shovel`).
+- `panic` takes no parameters (starts a horde event).
+- `spawn_hazard` takes `kind` (`explosion`: detonated propane tank, `fire`:
+  ignited gas can) + `count` 1-3, placed ~200 units from the survivors.
+- Capabilities are probed in-game: the heartbeat's `caps` lists only actions
+  whose engine functions exist in the running game, and SDKs refuse
+  unadvertised actions before writing. A missing function at run time is
+  reported as `CAPABILITY_UNAVAILABLE`.
 - `count`: common 1-10; tank exactly 1; other specials 1-8; items 1-5;
   weapons 1-5.
 - `class`: infected allowlist (`tank witch smoker boomer hunter spitter
   jockey charger`); `item`: item allowlist (`first_aid_kit pain_pills
-  adrenaline pipe_bomb molotov defibrillator`); `weapon`: stock weapon
+  adrenaline pipe_bomb molotov defibrillator ammo upgradepack_incendiary
+  upgradepack_explosive`; `ammo` is a world ammo pile); `weapon`: stock weapon
   classname allowlist (`weapon_pistol`, `weapon_pistol_magnum`, `weapon_smg`,
   `weapon_smg_silenced`, `weapon_smg_mp5`, `weapon_rifle`,
   `weapon_rifle_desert`, `weapon_rifle_ak47`, `weapon_rifle_sg552`,

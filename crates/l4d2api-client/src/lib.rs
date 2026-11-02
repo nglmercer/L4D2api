@@ -511,6 +511,60 @@ impl Client {
         })
     }
 
+    /// Restore permanent health. `target` is `all`, `host` or `random`;
+    /// `requested` in the reply is the number of survivors targeted.
+    pub fn heal(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Heal {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Add temporary (pills-style) health, never past the maximum.
+    pub fn temp_health(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::TempHealth {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Damage survivors (also capped by `damage_max` in the game config).
+    pub fn damage(&mut self, target: &str, amount: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Damage {
+            target: target.to_owned(),
+            amount,
+        })
+    }
+
+    /// Revive incapacitated survivors.
+    pub fn revive(&mut self, target: &str) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Revive {
+            target: target.to_owned(),
+        })
+    }
+
+    /// Put an item straight into survivors' inventories (`ammo` refills).
+    pub fn give_item(&mut self, target: &str, item: &str) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::GiveItem {
+            target: target.to_owned(),
+            item: item.to_owned(),
+        })
+    }
+
+    /// Start a horde (panic) event.
+    pub fn panic(&mut self) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::Panic)
+    }
+
+    /// Detonate a propane tank (`explosion`) or ignite a gas can (`fire`)
+    /// near the survivors, 1-3 at a time.
+    pub fn spawn_hazard(&mut self, kind: &str, count: u32) -> Result<TypedResponse, Error> {
+        self.send_auto(proto::Action::SpawnHazard {
+            kind: kind.to_owned(),
+            count,
+        })
+    }
+
     fn send_locked(
         &mut self,
         id: &str,

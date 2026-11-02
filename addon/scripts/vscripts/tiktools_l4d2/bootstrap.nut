@@ -33,6 +33,7 @@ IncludeScript("tiktools_l4d2/state.nut");
 IncludeScript("tiktools_l4d2/protocol.nut");
 IncludeScript("tiktools_l4d2/limits.nut");
 IncludeScript("tiktools_l4d2/spawns.nut");
+IncludeScript("tiktools_l4d2/effects.nut");
 IncludeScript("tiktools_l4d2/actions.nut");
 
 // New generation per VScript startup; old commands from a previous game

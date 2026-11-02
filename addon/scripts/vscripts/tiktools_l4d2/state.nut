@@ -96,6 +96,7 @@ function TikTools_GameplayReady() {
 }
 
 function TikTools_WriteHeartbeat() {
+    try { TikTools_ComputeCaps(); } catch (e) { }
     local lines = [
         "v=1",
         "gen=" + ::TikTools.GENERATION,

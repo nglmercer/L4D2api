@@ -383,6 +383,37 @@ export class L4D2Client {
   async spawnWeapon(weapon: string, count: number, signal?: AbortSignal): Promise<ActionResult> {
     return this.send(this.nextId(), "spawn_weapon", { weapon, count: String(count) }, signal);
   }
+
+  // Player effects: `target` is "all", "host" or "random". The reply's
+  // `requested` is the number of survivors targeted, `actual` how many changed.
+
+  async heal(target: string, amount: number, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "heal", { target, amount: String(amount) }, signal);
+  }
+
+  async tempHealth(target: string, amount: number, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "temp_health", { target, amount: String(amount) }, signal);
+  }
+
+  async damage(target: string, amount: number, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "damage", { target, amount: String(amount) }, signal);
+  }
+
+  async revive(target: string, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "revive", { target }, signal);
+  }
+
+  async giveItem(target: string, item: string, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "give_item", { target, item }, signal);
+  }
+
+  async panic(signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "panic", {}, signal);
+  }
+
+  async spawnHazard(kind: string, count: number, signal?: AbortSignal): Promise<ActionResult> {
+    return this.send(this.nextId(), "spawn_hazard", { kind, count: String(count) }, signal);
+  }
 }
 
 export { ProtocolError };

@@ -15,6 +15,11 @@ export {
   ITEM_ALLOWLIST,
   WEAPON_ALLOWLIST,
   CAPABILITY_ALLOWLIST,
+  TARGET_ALLOWLIST,
+  HAZARD_ALLOWLIST,
+  GIVE_ALLOWLIST,
+  AMOUNT_MAX,
+  HAZARD_MAX,
 } from "./protocol.js";
 export type { DecodedResult } from "./protocol.js";
 export type {

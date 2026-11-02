@@ -355,3 +355,27 @@ class L4D2Client:
 
     def spawn_weapon(self, weapon: str, count: int) -> ActionResult:
         return self.send(self.next_id(), "spawn_weapon", weapon=weapon, count=str(count))
+
+    # Player effects: `target` is "all", "host" or "random". The reply's
+    # `requested` is the number of survivors targeted, `actual` how many changed.
+
+    def heal(self, target: str, amount: int) -> ActionResult:
+        return self.send(self.next_id(), "heal", target=target, amount=str(amount))
+
+    def temp_health(self, target: str, amount: int) -> ActionResult:
+        return self.send(self.next_id(), "temp_health", target=target, amount=str(amount))
+
+    def damage(self, target: str, amount: int) -> ActionResult:
+        return self.send(self.next_id(), "damage", target=target, amount=str(amount))
+
+    def revive(self, target: str) -> ActionResult:
+        return self.send(self.next_id(), "revive", target=target)
+
+    def give_item(self, target: str, item: str) -> ActionResult:
+        return self.send(self.next_id(), "give_item", target=target, item=item)
+
+    def panic(self) -> ActionResult:
+        return self.send(self.next_id(), "panic")
+
+    def spawn_hazard(self, kind: str, count: int) -> ActionResult:
+        return self.send(self.next_id(), "spawn_hazard", kind=kind, count=str(count))

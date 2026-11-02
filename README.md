@@ -59,10 +59,18 @@ Full matrix: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 | Action | Arguments | Status |
 |---|---|---|
 | `test_connection` | — | working (readiness-gated) |
-| `spawn_item` | `item`, `count` 1–5 | implemented, live verification pending |
-| `spawn_weapon` | `weapon`, `count` 1–5 | implemented, live verification pending |
+| `spawn_item` | `item`, `count` 1–5 | working (verified in a local-host session) |
+| `spawn_weapon` | `weapon`, `count` 1–5 | working (verified in a local-host session) |
 | `spawn_common` | `count` 1–10 | experimental; live verification pending |
-| `spawn_infected` | `class`, `count` | gated (`CAPABILITY_UNAVAILABLE`) |
+| `spawn_infected` | `class`, `count` | implemented via `ZSpawn`; live verification pending |
+| `heal` / `temp_health` / `damage` | `target`, `amount` 1–100 | implemented; live verification pending |
+| `revive` | `target` | implemented; live verification pending |
+| `give_item` | `target`, `item` | implemented; live verification pending |
+| `panic` | — | implemented; live verification pending |
+| `spawn_hazard` | `kind` (`explosion`/`fire`), `count` 1–3 | implemented; live verification pending |
+
+`target` is `all`, `host` or `random`. Actions are advertised in the
+heartbeat only when the running game has the engine functions they need.
 
 Full schemas: [docs/PROTOCOL.md](docs/PROTOCOL.md). Per-capability labels:
 [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
